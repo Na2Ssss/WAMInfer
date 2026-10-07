@@ -1,0 +1,304 @@
+{
+  "upstream_repository": "https://github.com/OpenWAM-Official/OpenWAM",
+  "upstream_revision": "898e2f96c02c172f078c17ff85a055a6bbd419a2",
+  "imported_source_revision": "76bade23494774278dbc6e036d5793214adff191",
+  "core_python_files": 9,
+  "core_python_lines": 2096,
+  "cpp_files": 2,
+  "cpp_lines": 411,
+  "source_sha256": {
+    "WAMInfer/__init__.py": "e06e16c44aec6315a9697434edf186287a8abbaedc74c266e7908f0f635a95ed",
+    "WAMInfer/_triton_attention.py": "643919d58b75a4cfedf865a4284a8c39c2c8a0d9663ba7ef08b9849d18cd260b",
+    "WAMInfer/_triton_inference.py": "12069bdc9503e3639c47e3df7c82cd0d541438c1ee47507fe75c57829b4f898f",
+    "WAMInfer/blocks.py": "aea3458dc26dc2c2325b4a707114153f49e999a0be8545bfad2e5f7a743c8bdf",
+    "WAMInfer/ffn.py": "ea5bc2fa98767cfd4f2b783104f8ba5d548e7a023f9241d19a7582411bbaf939",
+    "WAMInfer/graphs.py": "5fc97ddb16cd338d176e6208768ef4b572ae852199c85a630f141cf4a368e95d",
+    "WAMInfer/joint.py": "f28f3c2c99954f28f8e816fabb710eb8bcf20b3d756be7352a76c2a4d66ae9a8",
+    "WAMInfer/preparation.py": "022d4d8d3bb07db40f29d5893a07c84f8af9eae7d5a03a2692879d37abce6be1",
+    "WAMInfer/runtime.py": "488ba86deb38449af4847ecd7d90b7ed3566f3becb3692dba654c7db51872248",
+    "WAMInfer/_cublaslt_inference.cpp": "126f86137d91df2cfa14750e8b1e7c524a55df4211ceba5388069161a6192eea",
+    "WAMInfer/_inference_guards.cpp": "fbd0dcf4d35fe48abae30841b2ef7eeff4e2777fe2a782db8dec75231c839346"
+  },
+  "numerical_baseline": "Existing Parallel with fixed FFN configurations; not native eager. Production autotuning may choose different algorithms.",
+  "fixed_ffn_config_fields": [
+    "algorithm_id",
+    "tile",
+    "stages",
+    "split_k",
+    "reduction",
+    "cta_swizzle",
+    "custom_option",
+    "inner_shape",
+    "cluster_shape"
+  ],
+  "fixed_ffn_configs": [
+    {
+      "rows": 360,
+      "weight_shape": [
+        14336,
+        3072
+      ],
+      "gelu": true,
+      "config": [
+        21,
+        24,
+        9,
+        3,
+        1,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "rows": 360,
+      "weight_shape": [
+        3072,
+        14336
+      ],
+      "gelu": false,
+      "config": [
+        30,
+        18,
+        0,
+        5,
+        1,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "rows": 240,
+      "weight_shape": [
+        14336,
+        3072
+      ],
+      "gelu": true,
+      "config": [
+        21,
+        24,
+        9,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "rows": 240,
+      "weight_shape": [
+        3072,
+        14336
+      ],
+      "gelu": false,
+      "config": [
+        6,
+        18,
+        16,
+        4,
+        2,
+        1,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "checkpoint_validation": {
+    "checks": [
+      "gold_case_0",
+      "gold_case_1",
+      "gold_case_2",
+      "cpu_all",
+      "cpu_none",
+      "cpu_alternate",
+      "cuda_all",
+      "cuda_none",
+      "cuda_alternate",
+      "fresh_context",
+      "poisoned_prefix_refreshed",
+      "video_9_hashes_equal",
+      "native_methods_storage_state_dict_unchanged",
+      "close_cleanup",
+      "native_eager_restored_bitwise"
+    ],
+    "bitwise_equal": true
+  },
+  "video_hashes": [
+    {
+      "shape": [
+        384,
+        320,
+        3
+      ],
+      "sha256": "d181d165ca6c3a71453b6f6156323c94b37a809f8b0079e2ee6098a60310fd9b"
+    },
+    {
+      "shape": [
+        384,
+        320,
+        3
+      ],
+      "sha256": "85884d44ce9c6c78262d40c1bb1c9324271c731742813c31495e3cee4c25ef32"
+    },
+    {
+      "shape": [
+        384,
+        320,
+        3
+      ],
+      "sha256": "73d9aa1ea0fe06c6799bc066440e916c1ec78be175db6d6cae6f1428196e3640"
+    },
+    {
+      "shape": [
+        384,
+        320,
+        3
+      ],
+      "sha256": "114d7e48ecdd01dcfc9ab735856dd1cfdb704c05b674ae1ddac7e527043c2653"
+    },
+    {
+      "shape": [
+        384,
+        320,
+        3
+      ],
+      "sha256": "afc0caada7572b1195e3eb0c18e7562098d65023c12f823d7807d8a6bab710eb"
+    },
+    {
+      "shape": [
+        384,
+        320,
+        3
+      ],
+      "sha256": "f9951d77067356ad52a0ed5174d3bd5c7cab99cd387d9389a578237016c564e1"
+    },
+    {
+      "shape": [
+        384,
+        320,
+        3
+      ],
+      "sha256": "1dfbdade357f1abfeeb581a5a690054747a397ee7de08a3826a89916cdb62766"
+    },
+    {
+      "shape": [
+        384,
+        320,
+        3
+      ],
+      "sha256": "519ce9f111b2dac32a5ec8380ee9b33daa89875ce2eb5d97b58a3990d0b91dc8"
+    },
+    {
+      "shape": [
+        384,
+        320,
+        3
+      ],
+      "sha256": "577ae4580a94aa9655bb9ba7b5ce1715f9b0927cd521e8a463a967ded6851d46"
+    }
+  ],
+  "nsight_request_counts": [
+    {
+      "name": "request:baseline_0",
+      "kernels": 9328,
+      "graph_kernels": 9184,
+      "copies": {
+        "Host-to-Device": 7,
+        "Device-to-Device": 545,
+        "Device-to-Host": 5
+      },
+      "stream_syncs": 12,
+      "graph_launches": 12
+    },
+    {
+      "name": "request:baseline_1",
+      "kernels": 9328,
+      "graph_kernels": 9184,
+      "copies": {
+        "Host-to-Device": 7,
+        "Device-to-Device": 545,
+        "Device-to-Host": 5
+      },
+      "stream_syncs": 12,
+      "graph_launches": 12
+    },
+    {
+      "name": "request:baseline_2",
+      "kernels": 9328,
+      "graph_kernels": 9184,
+      "copies": {
+        "Host-to-Device": 7,
+        "Device-to-Device": 545,
+        "Device-to-Host": 5
+      },
+      "stream_syncs": 12,
+      "graph_launches": 12
+    },
+    {
+      "name": "request:candidate_0",
+      "kernels": 9319,
+      "graph_kernels": 9184,
+      "copies": {
+        "Host-to-Device": 6,
+        "Device-to-Device": 545,
+        "Device-to-Host": 1
+      },
+      "stream_syncs": 6,
+      "graph_launches": 12
+    },
+    {
+      "name": "request:candidate_1",
+      "kernels": 9319,
+      "graph_kernels": 9184,
+      "copies": {
+        "Host-to-Device": 6,
+        "Device-to-Device": 545,
+        "Device-to-Host": 1
+      },
+      "stream_syncs": 6,
+      "graph_launches": 12
+    },
+    {
+      "name": "request:candidate_2",
+      "kernels": 9319,
+      "graph_kernels": 9184,
+      "copies": {
+        "Host-to-Device": 6,
+        "Device-to-Device": 545,
+        "Device-to-Host": 1
+      },
+      "stream_syncs": 6,
+      "graph_launches": 12
+    }
+  ],
+  "import_validation": {
+    "date": "2026-10-07",
+    "source_byte_match": true,
+    "core_files_verified": 11,
+    "wheel_build": "passed; setuptools.build_meta.build_wheel",
+    "wheel_source_byte_match": true,
+    "wheel_import": "passed in a separate directory using extracted wheel",
+    "wheel_cpp_sources_present": true,
+    "benchmark_import": "passed",
+    "lint": "ruff check WAMInfer: passed",
+    "gpu_tests": {
+      "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -c WAMInfer/pytest.ini WAMInfer/tests -q -p no:cacheprovider",
+      "gpu": "NVIDIA A100-SXM4-80GB",
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 32.35,
+      "warnings": [
+        "TORCH_CUDA_ARCH_LIST unset; compilation targets visible GPU"
+      ],
+      "scope": "Existing functional tests; not a new full-checkpoint latency experiment or an assertion that all fused operations are bitwise equal to native eager."
+    },
+    "documentation_local_links_checked": 28
+  }
+}

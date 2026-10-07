@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waminfer"
+version = "0.1.0"
+description = "External Parallel inference acceleration for OpenWAM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = ["torch>=2.7,<2.8", "numpy", "Pillow", "einops"]
+
+[project.urls]
+Repository = "https://github.com/Na2Ssss/WAMInfer"
+Upstream = "https://github.com/OpenWAM-Official/OpenWAM"
+
+[tool.setuptools.packages.find]
+include = ["WAMInfer"]
+
+[tool.setuptools.package-data]
+WAMInfer = ["*.cpp"]
+
+[tool.ruff.lint]
+select = ["F"]

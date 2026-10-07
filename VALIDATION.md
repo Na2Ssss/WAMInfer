@@ -1,0 +1,84 @@
+# 验证与性能记录
+
+计算代码导入自已验证外接版本 `76bade23494774278dbc6e036d5793214adff191`，原生 OpenWAM 参照版本为 `898e2f96c02c172f078c17ff85a055a6bbd419a2`。源文件哈希、固定 FFN 配置、正确性结果及视频哈希在 [verification.json](evidence/verification.json)；逐次延时样本在 [latency.json](evidence/latency.json)。
+
+## 数值比较的含义
+
+最近几轮增量优化要求与已有 Parallel 在固定 FFN 算法下保持动作逐字节一致；视频按逐帧 SHA-256 比较。这里没有减少步数、蒸馏或按误差阈值接受差异。
+
+历史融合相对原生 eager 已有数值差异。完整外接包不具备“与原生 eager 逐位一致”的结论。关闭外接层后的原生恢复测试，才是与原生 eager 参考直接比较。
+
+cuBLASLt FFN 的生产路径在准备阶段自动选择算法；不同算法可能改变浮点累加顺序。性能审计固定了完整配置，记录在证据文件中。单独运行 `benchmark.py` 测的是本机自动调优后的延时，不能据此直接复现固定算法的精确输出。本仓库不包含 checkpoint、请求数据、动作参考数组或原始 Nsight trace。
+
+## 共同测量条件
+
+RTX 4090（48 GiB 显存配置）、PyTorch 2.7.1+cu128、CPU 4 线程；Wan2.2 TI2V 5B RobotWin checkpoint，BF16，384×320，9 视频帧、32 输出动作、10 个完整同步去噪步，seed=42。
+
+请求从 CPU 图像/状态输入到 CPU 物理动作返回，包含预处理；排除模型加载、首次编译、视频解码和网络传输。文本缓存命中。同进程共享模型与权重，固定 FFN，预热后交替执行顺序，并交替改变图像和状态。没有锁定 GPU 时钟。
+
+## Video/Action 调度
+
+基线已包含每请求一次的整数索引准备。原来 Action 与整个 Video post-attention/下一层准备重叠；候选先完成 Video 输出投影和 cross attention，再让 Action 与 Video FFN/下一层准备重叠。
+
+| 120 对独立测量 | 平均 ms | P95 ms |
+| --- | ---: | ---: |
+| 调整前 | 221.383 | 223.266 |
+| 调整后 | 217.134 | 218.972 |
+
+配对减少 4.249 ms（1.92%），bootstrap 95% 区间 4.132–4.368 ms。输出一致，零重捕获。Nsight 显示较小的 Video 投影变快，FFN 有些变慢，总关键路径仍缩短。没有从该时间线推导出具体的 SM 或显存带宽利用率。
+
+## 最新 CPU 掩码准备
+
+默认动作映射来自 CPU。原路径先上传映射，再在 GPU 上做 min/max、any、nonzero 等准备并读回判断；现在直接复用原生 helper 在 CPU 准备整数索引，最后异步上传一次。
+
+| 最终代码，120 对独立测量 | 平均 ms | P95 ms |
+| --- | ---: | ---: |
+| 调度版 `47a3372` | 217.281 | 218.968 |
+| 当前版 | 217.124 | 218.828 |
+
+配对减少 **0.157 ms（0.072%）**，bootstrap 95% 区间 **0.064–0.241 ms**。收益很小。原型曾测得 0.279 ms，以最终代码结果为准；不能将它与调度实验的绝对值相减或累计。
+
+两种实现共用同一组 CUDA Graph，零重捕获。Nsight 在计时后才开始采集，3 个基线和 3 个候选请求的每请求计数如下：
+
+| 计数 | 基线 | 当前版 |
+| --- | ---: | ---: |
+| GPU→CPU copy | 5 | 1 |
+| CPU→GPU copy | 7 | 6 |
+| cudaStreamSynchronize | 12 | 6 |
+| 全部 kernel | 9328 | 9319 |
+| Graph 内 kernel | 9184 | 9184 |
+| Graph launch | 12 | 12 |
+| GPU→GPU copy | 545 | 545 |
+
+省掉了 9 个掩码准备 kernel 和同步。Graph 内的模型计算不变，最后的动作读回仍保留。带 profiler 的 wall time 有扰动，不代替配对计时。
+
+CPU/GPU 显式全开或交替 mask 各做了 20 对短测，共 80 对；变化在 -0.114 到 +0.080 ms，95% 区间均包含零，未确认这些输入的稳定收益。
+
+## 正确性与生命周期
+
+完整 checkpoint 检查通过：
+
+- 原始观测、平移图像及改变状态、反色图像及改变 prompt 三组动作逐字节一致。
+- CPU/GPU 显式全开、全关、交替 mask 都一致。
+- 强制条件刷新、旧 prefix K/V 污染后重建，结果一致。
+- 9 帧视频哈希一致。
+- 原模型参数存储、方法和 state_dict 键不变。
+- `close()` 清理通过，随后原生 eager 结果逐字节恢复。
+
+既有 A100 adapter 测试覆盖权重/调度更新、单/多帧和单/多步、原生恢复。仓库发布时的打包与测试结果记录在 [verification.json](evidence/verification.json) 的 `import_validation` 中；A100 功能测试不代表同样的性能收益。
+
+## 没有保留的候选
+
+| 尝试 | 结果与决定 |
+| --- | --- |
+| 输出投影改用 4 warps | 60 对仅省 0.138 ms，不增加专用 kernel |
+| 同时替换 cross-attention Q 投影 | 舍入边界变化，动作不同，排除 |
+| RoPE 成对通道计算，两种 chunk | 各 60 对，+0.097 / -0.024 ms，区间含零，排除 |
+| 缩小 65-key context attention 的最后硬件块 | 6 类掩码中 4 类输出不逐位一致，排除 |
+| Action 提前到 cross attention 后 | 50 对慢 0.592 ms，排除 |
+| Action 提前到 self 输出投影后 | 50 对慢 5.202 ms，排除 |
+| Action 高优先级 stream | 50 对变化 -0.211 ms，区间含零，排除 |
+
+较早的整段 sampler Graph 原型只省约 0.58 ms，未引入它额外的生命周期管理。主要成本仍在 Video FFN 与投影；不能用小算子微基准的加速比替代端到端收益。
+
+Nsight Systems 已用于时间线分析。Nsight Compute 硬件计数器访问受限，未取得可支持 SM、DRAM 或 stall 原因判断的计数器数据。

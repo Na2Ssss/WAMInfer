@@ -1,0 +1,15 @@
+WAMInfer
+
+External inference code adapted around OpenWAM's inference interfaces.
+Upstream: https://github.com/OpenWAM-Official/OpenWAM
+Reference revision: 898e2f96c02c172f078c17ff85a055a6bbd419a2
+
+The upstream Apache-2.0 license text is retained in LICENSE.
+The WAMInfer source files are external adaptations, including branch scheduling,
+prepared conditioning, graph replay, projection packing, and fused inference
+operators. They are not unmodified copies of OpenWAM model definitions.
+Upstream model source, checkpoints, and datasets are not distributed here.
+
+The external-addon organization was informed by BAC:
+https://github.com/ky-ji/BAC/tree/82029a6fb0573fd07f4b26088219b0eb5ccc5a67
+BAC's approximate block-skipping method is not implemented by this package.
