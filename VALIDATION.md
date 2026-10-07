@@ -1,6 +1,12 @@
 # 验证与性能记录
 
-计算代码导入自已验证外接版本 `76bade23494774278dbc6e036d5793214adff191`，原生 OpenWAM 参照版本为 `898e2f96c02c172f078c17ff85a055a6bbd419a2`。源文件哈希、固定 FFN 配置、正确性结果及视频哈希在 [verification.json](evidence/verification.json)；逐次延时样本在 [latency.json](evidence/latency.json)。
+初始发布 `846ce85` 的计算代码原样导入自已验证外接版本 `76bade23494774278dbc6e036d5793214adff191`，原生 OpenWAM 参照版本为 `898e2f96c02c172f078c17ff85a055a6bbd419a2`。当前源码哈希、初始版本哈希、固定 FFN 配置、正确性结果及视频哈希在 [verification.json](evidence/verification.json)；逐次延时样本在 [latency.json](evidence/latency.json)。下文完整 checkpoint 与延时数据来自初始发布前的审计。
+
+## 内部参数检查精简
+
+相对 `846ce85`，仅从两个 `_triton_*.py` 文件删除 73 行只报错的参数检查和 2 行失去用途的变量，核心 Python 从 2096 行降为 2021 行。运行入口、缓存失效、输入版本和 Graph 结构检查保持不变。内部算子不再保证非法输入能得到明确的参数报错。
+
+AST 对照确认 7 个 Triton JIT 函数、其他计算表达式及 kernel 启动配置不变。A100 上既有 14 项 GPU 测试全部通过；另以原生层构成的小模型，对照 1/3 latent 帧与 1/2/10 去噪步的 6 组请求，动作和最终视频 latent 共 12 个数组均逐字节一致。该对照未加载完整 checkpoint，视频解码替换为恒等函数。详细结果记录于 `verification.json` 的 `check_simplification`；这次只报告代码精简，不宣称端到端延时改善。
 
 ## 数值比较的含义
 

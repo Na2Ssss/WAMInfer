@@ -79,21 +79,7 @@ def rms_rope(
     num_heads: int,
     eps: float,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if num_heads < 1 or q.ndim != 3 or q.shape != k.shape or q.shape[-1] % (2 * num_heads):
-        raise ValueError("Q/K must have matching [batch, sequence, heads * even_head_dim] shapes.")
-    if not q.is_cuda or q.dtype != torch.bfloat16 or k.dtype != q.dtype:
-        raise ValueError("Fused Q/K RMSNorm + RoPE requires CUDA BF16 tensors.")
     batch, seq, hidden = q.shape
-    if hidden > 8192 or hidden < 2 or batch < 1 or seq < 1:
-        raise ValueError("Fused Q/K RMSNorm + RoPE requires nonempty inputs and hidden dim <= 8192.")
-    if any(t.device != q.device for t in (k, wq, wk, frequency)):
-        raise ValueError("Fused Q/K inputs must share a CUDA device.")
-    if q.stride(-1) != 1 or k.stride(-1) != 1 or not wq.is_contiguous() or not wk.is_contiguous():
-        raise ValueError("Fused Q/K inputs need contiguous channels and norm weights.")
-    if wq.shape != (hidden,) or wk.shape != (hidden,) or wq.dtype != q.dtype or wk.dtype != q.dtype:
-        raise ValueError("Fused Q/K norm weights must match the hidden dimension and dtype.")
-    if frequency.dtype not in (torch.float32, torch.float64) or frequency.numel() != seq * hidden // num_heads:
-        raise ValueError("RoPE frequencies must contain one real cosine/sine pair per head channel pair.")
     frequency = frequency.reshape(seq, hidden // num_heads // 2, 2)
     oq = torch.empty(q.shape, dtype=q.dtype, device=q.device)
     ok = torch.empty_like(oq)
@@ -208,34 +194,6 @@ def modulated_norm(
     self-attention output; CROSS_RESIDUAL adds cross-attention output;
     FFN_RESIDUAL folds the previous block's gated FFN into the next block.
     """
-    if torch.is_grad_enabled() or not x.is_cuda or x.dtype != torch.bfloat16:
-        raise ValueError("Fused video normalization requires CUDA BF16 inference.")
-    if x.ndim != 3 or x.shape[0] != 1 or x.shape[1] < 1 or not 1 <= x.shape[-1] <= 8192:
-        raise ValueError("Fused video normalization requires nonempty [1, tokens, hidden<=8192] inputs.")
-    hidden = x.shape[-1]
-    if mode not in (0, 1, 2, 3) or mod.shape != (1, 6, hidden) or not mod.is_contiguous():
-        raise ValueError("Invalid normalization mode or block modulation layout.")
-    if time.shape not in ((1, 6, hidden), (1, 1, 6, hidden), (1, x.shape[1], 6, hidden)):
-        raise ValueError("Time modulation must broadcast or align with the video tokens.")
-    if time.stride(-1) != 1 or time.stride(-2) != hidden or x.stride(-1) != 1:
-        raise ValueError("Fused normalization requires contiguous hidden features and modulation slots.")
-    if mode and (update is None or update.shape != x.shape or update.stride(-1) != 1):
-        raise ValueError("Residual update must match the video tokens.")
-    if mode == 3 and (previous is None or previous.shape != mod.shape or not previous.is_contiguous()):
-        raise ValueError("Cross-layer fusion needs the previous block modulation.")
-    if mode == 1 and (
-        weight is None
-        or bias is None
-        or weight.shape != (hidden,)
-        or bias.shape != (hidden,)
-        or not weight.is_contiguous()
-        or not bias.is_contiguous()
-    ):
-        raise ValueError("Affine normalization needs matching contiguous weights and bias.")
-    if any(
-        t.device != x.device or t.dtype != x.dtype for t in (update, mod, previous, time, weight, bias) if t is not None
-    ):
-        raise ValueError("Fused normalization tensors must share dtype and device.")
     y, norm = (
         torch.empty(x.shape, dtype=x.dtype, device=x.device),
         torch.empty(x.shape, dtype=x.dtype, device=x.device),

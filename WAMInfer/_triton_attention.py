@@ -239,18 +239,6 @@ def _launch_prefix(q, k, v, mask, heads):
 def masked_attention(
     q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask: torch.Tensor | None, heads: int, tail: bool = False
 ) -> torch.Tensor:
-    if not q.is_cuda or q.dtype != torch.bfloat16 or k.dtype != q.dtype or v.dtype != q.dtype:
-        raise ValueError("Triton attention requires CUDA BF16 inputs.")
-    if q.ndim != 3 or k.ndim != 3 or k.shape != v.shape or q.shape[0] != k.shape[0]:
-        raise ValueError("Attention expects matching BSH inputs.")
-    if heads < 1 or q.shape[-1] != k.shape[-1] or q.shape[-1] // heads != 128:
-        raise ValueError("Triton attention requires head dimension 128.")
-    if q.shape[-1] % heads or min(q.shape[:2]) < 1 or k.shape[1] < 1:
-        raise ValueError("Attention requires nonempty input and complete heads.")
-    if any(x.device != q.device or x.stride(-1) != 1 for x in (k, v, q)):
-        raise ValueError("Attention requires matching devices and contiguous channels.")
-    if mask is not None and (mask.dtype != torch.bool or mask.device != q.device):
-        raise ValueError("Attention mask must be boolean and on the input device.")
     if k.shape[1] == 513 and heads == 24 and mask is not None and _is_ampere80(q.device):
         broadcast = torch.broadcast_to(mask, (q.shape[0], heads, q.shape[1], 513))
         if broadcast.stride(1) == 0 and broadcast.stride(2) == 0:
@@ -339,12 +327,6 @@ def _launch_joint(q, k, v, video, first, heads, bm=32, bn=64, warps=4, stages=2)
 def joint_first_frame_attention(
     q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, video: int, first: int, heads: int
 ) -> torch.Tensor:
-    if torch.is_grad_enabled() or not q.is_cuda or q.dtype != torch.bfloat16:
-        raise ValueError("Joint attention requires CUDA BF16 inference.")
-    if q.shape != k.shape or q.shape != v.shape or q.ndim != 3 or q.shape[-1] != heads * 128:
-        raise ValueError("Joint attention requires matching BSH tensors with head_dim=128.")
-    if not 0 < first <= video < q.shape[1] or not all(t.is_contiguous() and t.device == q.device for t in (q, k, v)):
-        raise ValueError("Joint attention requires valid Video boundaries and contiguous inputs.")
     ada = _is_ada(q.device)
     return _launch_joint(
         q, k, v, video, first, heads, bm=32 if ada else 128, bn=64 if ada else 128, warps=4 if ada else 8, stages=1
@@ -455,21 +437,6 @@ def current_frame_attention(
     va: torch.Tensor,
     heads: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    tensors = (qv, qa, ck, kv, ka, cv, vv, va)
-    if any(t.ndim != 3 or t.device != qv.device or t.dtype != torch.bfloat16 or t.stride(-1) != 1 for t in tensors):
-        raise ValueError("Split attention requires CUDA BF16 BSH inputs with contiguous channels.")
-    if not qv.is_cuda or heads < 1 or qv.shape[-1] != heads * 128:
-        raise ValueError("Split attention requires CUDA and head dimension 128.")
-    if any(t.shape[0] != qv.shape[0] or t.shape[-1] != qv.shape[-1] or min(t.shape[:2]) < 1 for t in tensors):
-        raise ValueError("Split attention requires matching batch/channels and nonempty banks.")
-    if (
-        qv.shape[1] != kv.shape[1]
-        or kv.shape != vv.shape
-        or qa.shape != ka.shape
-        or qa.shape != va.shape
-        or ck.shape != cv.shape
-    ):
-        raise ValueError("Split attention requires matching query/key/value banks per modality.")
     ov = torch.empty(qv.shape, device=qv.device, dtype=qv.dtype)
     oa = torch.empty(qa.shape, device=qa.device, dtype=qa.dtype)
     nc, nv, na = ck.shape[1], kv.shape[1], qa.shape[1]

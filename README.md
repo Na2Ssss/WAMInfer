@@ -2,7 +2,7 @@
 
 OpenWAM 的外接 Parallel 推理加速包。共享原模型和权重，保留原始采样步骤，通过条件预计算、当前帧 K/V 复用、CUDA Graph、分支调度和融合算子降低推理延时。
 
-**核心为 9 个 Python 文件、2096 行，另有 2 个 C++ 扩展、411 行。** 行数包含注释和空行，不包括 benchmark、测试和文档。原生 OpenWAM 源码不在本仓库内。
+**核心为 9 个 Python 文件、2021 行，另有 2 个 C++ 扩展、411 行。** 行数包含注释和空行，不包括 benchmark、测试和文档。原生 OpenWAM 源码不在本仓库内。
 
 从 [中文源码导读](CODE_GUIDE.md) 了解一次推理如何经过这些文件；[验证记录](VALIDATION.md) 说明测试条件、数值边界和测量结果。
 
@@ -54,6 +54,7 @@ architecture = fast.close()
 - 同一 runtime 内请求串行化；这是单请求中 Video/Action 的 GPU 并行，不是多请求并发服务。
 - 最近的优化按**相对已有 Parallel、固定 FFN 算法的逐字节一致性**验证。历史 BF16 融合相对原生 eager 存在数值差异，不能将整个外接包宣称为与 eager 逐位相同。
 - FFN 会在准备阶段选择算法；完整性能对照固定了算法配置。新进程自动调优不等于自动复现同一组算法，配置见 [验证证据](evidence/verification.json)。
+- `_triton_*` 算子仅供内部调用，形状、布局和 dtype 由调用方保证，不再逐参数检查。缓存失效、Graph 输入刷新及运行入口的条件检查继续保留。
 
 ## 已测结果
 
@@ -82,6 +83,6 @@ NPZ 包含 HWC uint8 `image` 和 `proprio`。默认测速预热 10 次、运行 
 
 ## 来源
 
-计算代码来自已验证外接版本 `76bade23494774278dbc6e036d5793214adff191`，迁入本仓库时保持 Python/C++ 源文件字节不变，哈希见 [verification.json](evidence/verification.json)。
+初始发布 `846ce85` 从已验证外接版本 `76bade23494774278dbc6e036d5793214adff191` 原样迁入 Python/C++ 代码。当前版本进一步删除了内部算子的 75 行参数检查及无用变量，计算和启动配置保持不变；当前源码哈希及验证结果见 [verification.json](evidence/verification.json)。
 
 外接组织方式参考 [BAC](https://github.com/ky-ji/BAC/tree/82029a6fb0573fd07f4b26088219b0eb5ccc5a67)，未加入其近似 block 跳算策略。许可证和来源说明见 [LICENSE](LICENSE)、[NOTICE](NOTICE)。

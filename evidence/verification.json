@@ -3,13 +3,13 @@
   "upstream_revision": "898e2f96c02c172f078c17ff85a055a6bbd419a2",
   "imported_source_revision": "76bade23494774278dbc6e036d5793214adff191",
   "core_python_files": 9,
-  "core_python_lines": 2096,
+  "core_python_lines": 2021,
   "cpp_files": 2,
   "cpp_lines": 411,
   "source_sha256": {
     "WAMInfer/__init__.py": "e06e16c44aec6315a9697434edf186287a8abbaedc74c266e7908f0f635a95ed",
-    "WAMInfer/_triton_attention.py": "643919d58b75a4cfedf865a4284a8c39c2c8a0d9663ba7ef08b9849d18cd260b",
-    "WAMInfer/_triton_inference.py": "12069bdc9503e3639c47e3df7c82cd0d541438c1ee47507fe75c57829b4f898f",
+    "WAMInfer/_triton_attention.py": "087b8dbddf1d65fb03531529df6a5d76a794f71bd6e57f264f8e70b72fdd53f9",
+    "WAMInfer/_triton_inference.py": "b5764c3a8757dd41f8714be21fab62c8ad12561b2ae9fc4a88530b49f4271b5c",
     "WAMInfer/blocks.py": "aea3458dc26dc2c2325b4a707114153f49e999a0be8545bfad2e5f7a743c8bdf",
     "WAMInfer/ffn.py": "ea5bc2fa98767cfd4f2b783104f8ba5d548e7a023f9241d19a7582411bbaf939",
     "WAMInfer/graphs.py": "5fc97ddb16cd338d176e6208768ef4b572ae852199c85a630f141cf4a368e95d",
@@ -299,6 +299,78 @@
       ],
       "scope": "Existing functional tests; not a new full-checkpoint latency experiment or an assertion that all fused operations are bitwise equal to native eager."
     },
-    "documentation_local_links_checked": 28
+    "documentation_local_links_checked": 28,
+    "applies_to_revision": "846ce85aeadfc495e37ecc546188d1d34e8ec82c"
+  },
+  "initial_publication": {
+    "revision": "846ce85aeadfc495e37ecc546188d1d34e8ec82c",
+    "core_python_lines": 2096,
+    "source_sha256": {
+      "WAMInfer/__init__.py": "e06e16c44aec6315a9697434edf186287a8abbaedc74c266e7908f0f635a95ed",
+      "WAMInfer/_triton_attention.py": "643919d58b75a4cfedf865a4284a8c39c2c8a0d9663ba7ef08b9849d18cd260b",
+      "WAMInfer/_triton_inference.py": "12069bdc9503e3639c47e3df7c82cd0d541438c1ee47507fe75c57829b4f898f",
+      "WAMInfer/blocks.py": "aea3458dc26dc2c2325b4a707114153f49e999a0be8545bfad2e5f7a743c8bdf",
+      "WAMInfer/ffn.py": "ea5bc2fa98767cfd4f2b783104f8ba5d548e7a023f9241d19a7582411bbaf939",
+      "WAMInfer/graphs.py": "5fc97ddb16cd338d176e6208768ef4b572ae852199c85a630f141cf4a368e95d",
+      "WAMInfer/joint.py": "f28f3c2c99954f28f8e816fabb710eb8bcf20b3d756be7352a76c2a4d66ae9a8",
+      "WAMInfer/preparation.py": "022d4d8d3bb07db40f29d5893a07c84f8af9eae7d5a03a2692879d37abce6be1",
+      "WAMInfer/runtime.py": "488ba86deb38449af4847ecd7d90b7ed3566f3becb3692dba654c7db51872248",
+      "WAMInfer/_cublaslt_inference.cpp": "126f86137d91df2cfa14750e8b1e7c524a55df4211ceba5388069161a6192eea",
+      "WAMInfer/_inference_guards.cpp": "fbd0dcf4d35fe48abae30841b2ef7eeff4e2777fe2a782db8dec75231c839346"
+    }
+  },
+  "check_simplification": {
+    "date": "2026-10-07",
+    "baseline_revision": "846ce85aeadfc495e37ecc546188d1d34e8ec82c",
+    "removed_python_lines": 75,
+    "removed_raise_only_lines": 73,
+    "removed_unused_assignments": 2,
+    "changed_files": [
+      "WAMInfer/_triton_attention.py",
+      "WAMInfer/_triton_inference.py"
+    ],
+    "ast_check": "After removing raise-only guards and the two unused assignments, baseline and candidate ASTs match exactly; all 7 Triton JIT functions and launch configurations are unchanged.",
+    "cache_and_graph_guards_unchanged": true,
+    "lint": "ruff check WAMInfer: passed",
+    "gpu_tests": {
+      "gpu": "NVIDIA A100-SXM4-80GB",
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0,
+      "duration_seconds": 19.59
+    },
+    "output_comparison": {
+      "model": "Existing make_arch test fixture using genuine upstream layers; not the full checkpoint",
+      "gpu": "NVIDIA A100-SXM4-80GB",
+      "latent_frames": [
+        1,
+        3
+      ],
+      "denoising_steps": [
+        1,
+        2,
+        10
+      ],
+      "cases": 6,
+      "arrays": 12,
+      "outputs": "Actions and final video latents; VAE decode replaced with identity",
+      "all_arrays_byte_equal": true,
+      "sha256": {
+        "frames1_steps1_actions": "324be90492db670b2cdfbb6bee8f356be2209e0b8b92f9cc7b30f7add17c033a",
+        "frames1_steps1_latents": "eeafb60b628d13f3f4abff8315ac246f086611e7d6711ed1ad552c9770a17753",
+        "frames1_steps2_actions": "1d31862978e4480b49910e9a135196ced296d37ed264e1de448d9f7f97d918a6",
+        "frames1_steps2_latents": "eeafb60b628d13f3f4abff8315ac246f086611e7d6711ed1ad552c9770a17753",
+        "frames1_steps10_actions": "9a42c2f254d17719bde3642b3f8a5b6d1145eaaf61a53402f01b858b33a1764f",
+        "frames1_steps10_latents": "eeafb60b628d13f3f4abff8315ac246f086611e7d6711ed1ad552c9770a17753",
+        "frames3_steps1_actions": "e940ac824d4a9040ef7a7f5608697785a8a5cda2de7fdc671a126d6845383274",
+        "frames3_steps1_latents": "5b70d92184478ff4bc189ed29897ff0de300c314a21e133724308a6ddebd145d",
+        "frames3_steps2_actions": "75cc1750067f78a8b05a1dc1789cefdb8831d2f825a7dd20a4c1af889a85cb5b",
+        "frames3_steps2_latents": "9efd2b3dabb9ddb395b04d4168d6d0cd1bc9cd8fa36bf7138bb40facd6e9db52",
+        "frames3_steps10_actions": "1acb9aa07f0fac7798dc30370649930ebd159e9b4176d1c280c41a3c9a6f9860",
+        "frames3_steps10_latents": "fa14622124ae2dd5a2d0f1ebc4b68408ebdad2ed283a15913f19b346b6caf948"
+      }
+    },
+    "latency": "Not measured for this cleanup; no speedup claimed",
+    "scope": "Valid inputs under the existing internal kernel contracts; invalid direct calls no longer receive the removed parameter diagnostics."
   }
 }

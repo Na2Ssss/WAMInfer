@@ -1,4 +1,4 @@
-# 沿着一次推理读懂 2096 行代码
+# 沿着一次推理读懂 2021 行代码
 
 这套代码做的是**给现有 OpenWAM 增加一条更快的执行路径**。原库提供模型定义、权重、采样规则和归一化；这里组织计算顺序，准备可复用的中间结果，并调用更合适的 GPU 算子。
 
@@ -14,12 +14,12 @@
 | [`joint.py`](WAMInfer/joint.py) | 165 | Video/Action 双 stream 调度、联合 attention | `ParallelJointLoop._run` |
 | [`graphs.py`](WAMInfer/graphs.py) | 251 | CUDA Graph、输入刷新、文本和 VAE 执行 | `CudaGraphForward._replay` |
 | [`ffn.py`](WAMInfer/ffn.py) | 118 | 准备 FFN 权重布局和 cuBLASLt 执行计划 | `PreparedFFN.prepare/forward` |
-| [`_triton_inference.py`](WAMInfer/_triton_inference.py) | 263 | 融合归一化、调制、残差和 RoPE | `_modulated_norm`、`_qk_rms_rope_kernel` |
-| [`_triton_attention.py`](WAMInfer/_triton_attention.py) | 517 | 不同 mask/缓存布局的 attention kernel | `_attention_kernel`、`_split_attention_kernel` |
+| [`_triton_inference.py`](WAMInfer/_triton_inference.py) | 221 | 融合归一化、调制、残差和 RoPE | `_modulated_norm`、`_qk_rms_rope_kernel` |
+| [`_triton_attention.py`](WAMInfer/_triton_attention.py) | 484 | 不同 mask/缓存布局的 attention kernel | `_attention_kernel`、`_split_attention_kernel` |
 | [`__init__.py`](WAMInfer/__init__.py) | 5 | 导出 `OpenWAM` 和 `accelerate` | 整个文件 |
-| **核心 Python 合计** | **2096** | 包括注释和空行 | |
+| **核心 Python 合计** | **2021** | 包括注释和空行 | |
 
-另外还有 `_cublaslt_inference.cpp` 197 行、`_inference_guards.cpp` 214 行，以及 benchmark 63 行、测试及辅助代码 530 行。2096 不是整个仓库所有代码的总行数。
+另外还有 `_cublaslt_inference.cpp` 197 行、`_inference_guards.cpp` 214 行，以及 benchmark 63 行、测试及辅助代码 530 行。2021 不是整个仓库所有代码的总行数。
 
 ## 1. 入口：接入原模型
 
@@ -133,7 +133,7 @@ flowchart TD
 
 ## 8. 真正手写的 GPU 算子
 
-两个 `_triton_*.py` 文件共 **780 行**。这些代码通过 Triton 编译为 GPU kernel。
+两个 `_triton_*.py` 文件共 **705 行**。这些代码通过 Triton 编译为 GPU kernel。内部调用方负责提供满足既有 CUDA BF16、形状和布局约定的张量；原先只报错的重复参数检查已删除，kernel 数学和启动配置不变。
 
 `_triton_inference.py` 处理偏逐元素/归一化的计算：Q/K RMSNorm 与 RoPE 融合，以及残差、门控、LayerNorm 和时间调制融合。减少 kernel 启动和中间结果往返显存是主要目的。BF16 舍入位置被明确保留，RoPE 的相关旋转使用 FP64；不能为快一点直接降低精度。
 
@@ -148,6 +148,8 @@ FFN 的主体是两次大矩阵乘，中间经过 GELU。这里在 Ada 上使用
 准备阶段选择算法并分配工作空间；热路径绑定当前张量后直接执行，不在 Graph 捕获中调优。其他受支持硬件或未准备几何使用代码中的原 FFN 路径。
 
 另一个 C++ 文件 `_inference_guards.cpp` 运行在 CPU，快速检查模型状态和输入结构，帮助判断何时必须刷新权重/缓存或重新捕获。两份 C++ 扩展都不是手写 PTX；真正的 GPU GEMM 来自 cuBLASLt。
+
+这里的 guard 参与结果正确性：更换权重后要刷新打包权重和条件缓存，输入形状或布局变化后要重建 Graph。`graphs.py` 还检查 Tensor 版本，以发现同一对象的原地修改。这些逻辑继续保留，不能像只负责报错的内部参数检查一样直接删除。
 
 因此本仓库同时使用 **PyTorch、Triton、cuBLASLt、CUDA Stream 和 CUDA Graph**。它们处在执行链的不同位置；这里没有 CuTe、TileLang 或 cuTile 实现。
 
