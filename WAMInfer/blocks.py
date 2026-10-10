@@ -207,6 +207,10 @@ class VideoAdapter(View):
         q, k, v = projected.reshape(*normalized.shape[:-1], projected.shape[-1]).chunk(3, dim=-1)
         q, k = qk_rms_rope(q, k, sa.norm_q, sa.norm_k, state.rope_freqs, sa.num_heads)
         state.hidden_states = x
+        if layer_id == 1 and "token_reuse" in state.extras:
+            from WAMInfer.approximation import select_tokens
+
+            select_tokens(state, x)
         return q, k, v, (x,)
 
     def post_attn_at_layer_for_compile(self, layer_id, state, attended, fields):
@@ -241,6 +245,10 @@ class VideoAdapter(View):
 
     def ffn_at_layer_for_compile(self, layer_id, state, normalized, x):
         block = self.dit.blocks[layer_id]
+        reuse = state.extras.get("token_reuse") if layer_id > 0 else None
+        indices = state.extras.get("token_indices") if reuse is not None else None
+        if indices is not None:
+            normalized = normalized.index_select(1, indices)
         if self.ffn is not None:
             output = self.ffn.forward(layer_id, normalized)
         else:
@@ -248,6 +256,12 @@ class VideoAdapter(View):
             output = block.ffn[0](flat)
             output = block.ffn[1](output)
             output = block.ffn[2](output).reshape_as(normalized)
+        if reuse is not None:
+            n, count = reuse["n"], reuse["count"]
+            if indices is not None:
+                clean = reuse["cache"][layer_id - 1].index_copy(1, indices[:count], output[:, :count])
+                output = torch.cat((clean, output[:, count:]), dim=1)
+            state.extras["token_outputs"].append(output[:, :n].contiguous())
         if layer_id == self.num_layers - 1:
             modulation = block.modulation + state.time_mod
             gate = modulation[:, :, 5] if modulation.ndim == 4 else modulation[:, 5:6]

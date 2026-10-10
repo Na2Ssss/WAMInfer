@@ -1,6 +1,6 @@
 # WAMInfer
 
-**OpenWAM inference runtime — initial partial code release for RealtimeWAM.**
+**OpenWAM Parallel inference with optional token reuse and adaptive 2F/4F.**
 
 [Paper](https://arxiv.org/abs/2610.10079) · [中文源码导读](CODE_GUIDE.md) · [Validation](VALIDATION.md) · [Citation](#citation)
 
@@ -12,11 +12,11 @@
 
 WAMInfer adds an external Parallel inference path to OpenWAM, sharing the original model and weights. It combines prepared conditioning, request-local clean-frame K/V reuse, compiled phases, fused operators, CUDA Graph replay, and Video/Action stream scheduling. No edits to upstream source files are required.
 
-中文说明：这是论文的首批部分代码发布，当前提供 OpenWAM 的 Parallel 推理路径；完整论文方法中的 FastWAM、跨观测 token 复用及运动自适应计算尚未包含。代码结构与执行原理见[中文导读](CODE_GUIDE.md)。
+中文说明：Parallel 是唯一且默认的执行路径；跨观测 token 复用和运动自适应 2F/4F 各有一个独立开关，默认均关闭。开启任一开关会引入近似。代码结构与执行原理见[中文导读](CODE_GUIDE.md)。
 
 ## Release scope
 
-**v0.1.0 publishes the existing OpenWAM runtime, not a complete reproduction of the paper.**
+**v0.2.0 adds the two optional approximations to the existing OpenWAM runtime.** FastWAM and the full paper evaluation suite remain outside this release.
 
 | Component | This release |
 | --- | --- |
@@ -26,11 +26,11 @@ WAMInfer adds an external Parallel inference path to OpenWAM, sharing the origin
 | Triton attention, normalization/RoPE, and prepared FFN execution | Included |
 | CUDA Graph replay, cache invalidation, tests, and timing evidence | Included |
 | FastWAM backend | Not included |
-| Cross-observation selective FFN/token reuse and capacity filling | Not included |
-| Motion-adaptive 2F/4F Transformer residual refresh | Not included |
+| Cross-observation selective FFN/token reuse and capacity filling | Optional: `reuse_tokens=True` |
+| Motion-adaptive 2F/4F Transformer residual refresh | Optional: `adaptive_2f4f=True` |
 | Full paper benchmark and ablation runners | Not included |
 
-The paper combines dependency-aware scheduling, hardware-aware token reuse, and motion-adaptive refinement. Its 2F/4F settings perform two/four full Transformer evaluations within ten Euler updates. This runtime instead evaluates every Action block at every configured sampler step. Its Video/Action overlap should not be equated with a verified reproduction of the paper's complete Prefill/prediction schedule.
+With both switches off, the runtime evaluates every Action block at every configured sampler step. Adaptive 2F/4F performs two/four full Transformer evaluations within ten Euler updates, refreshing the output heads at each update. This external implementation retains the existing Video/Action overlap; it is not a verified reproduction of every paper execution schedule or benchmark configuration.
 
 The paper reports **24.09 ms / 8.90×** for FastWAM and **63.09 ms / 10.67×** for OpenWAM, averaged over its benchmark settings. Those are results of the full framework; they are **not performance claims for this release**. See the [paper](https://arxiv.org/abs/2610.10079) for the complete protocol.
 
@@ -41,7 +41,7 @@ Start with a working OpenWAM environment and an upstream-compatible checkpoint d
 The validated environment uses Python 3.10/3.11, PyTorch 2.7.1+cu128 and its corresponding Triton, plus a C++ compiler, CUDA development tools, and Ninja. The Ada FFN extension also uses the `nvidia.cublas` installation supplied with the PyTorch environment. Install without replacing that environment's dependencies:
 
 ```bash
-git clone --branch v0.1.0 --depth 1 https://github.com/Na2Ssss/WAMInfer.git
+git clone --depth 1 https://github.com/Na2Ssss/WAMInfer.git
 cd WAMInfer
 python -m pip install --no-deps --no-build-isolation -e .
 ```
@@ -77,6 +77,33 @@ architecture = fast.close()
 
 The direct runtime takes an explicit synchronous schedule. The convenience `OpenWAM.generate` interface constructs the native schedule from `num_inference_steps`.
 
+### Two optional switches
+
+```python
+model = OpenWAM("/path/to/checkpoint", reuse_tokens=True, adaptive_2f4f=True)
+# motion_metric receives denormalized NumPy actions and returns displacement in metres.
+result = model.generate(prompt, image, proprio=state, motion_metric=motion_metric)
+model.reset()  # New episode, camera stream, or camera preprocessing configuration.
+```
+
+The same constructor options work with `accelerate(architecture, ...)`. Enable either independently; Parallel stays enabled in all cases.
+
+- **`reuse_tokens`**: fully compute layer 0, then refresh selected current-observation FFN rows in later layers. RGB change above 5/255 makes a position mandatory; reserve 25% of quiet positions, round up to a capacity, and fill it using normalized layer-0 feature change. Attention, current residual gates, future-video and Action computation remain fresh at every full evaluation. Default `refresh_buckets=(32, 64, 96, 120)` uses the reference capacities for 120 observation tokens; other token counts include full refresh and smaller configured capacities. Profile capacities on your GPU before making latency claims. The first observation refreshes all rows. Prompt, weights and input geometry changes invalidate history automatically; `reset()` handles episode/camera changes. Input is one RGB PIL image at the inference resolution, with future video frames (the default 9-frame request).
+- **`adaptive_2f4f`**: requires `num_inference_steps=10` and a `motion_metric` callback. Full Transformer evaluations occur at updates 0 and 3; displacement at or below `motion_threshold=0.08` metres adds updates 6 and 9. Other updates embed current latents, add cached Transformer residuals, and run the current output heads. The callback sees the coarse clean prediction after update 3's full evaluation, before its Euler update. It runs once per request on CPU. This metric must match your action representation and controller.
+
+For a checkpoint with **absolute end-effector XYZ in metres in columns 0:3**, one metric is:
+
+```python
+import numpy as np
+
+def motion_metric(actions):
+    return np.linalg.norm(actions[:32, :3] - state[:3], axis=-1).max()
+```
+
+For two arms, take the maximum over both arms. Joint-action checkpoints need forward kinematics; delta-action checkpoints need their controller's clipping/scaling and cumulative displacement. Do not use the XYZ example for joint angles or normalized/delta actions. A callback keeps robot-specific conventions outside the inference package.
+
+`model.architecture.last_stats` reports the actual full-evaluation indices, refreshed token count and measured displacement. Both switches are approximations and need task-success evaluation on your deployment; disabling them preserves the existing Parallel behavior.
+
 ## Execution and numerical contract
 
 - CUDA BF16, `head_dim=128`, Wan22Ti2v, `joint_self_attn` Action, and the native Wan VAE; Parallel is the only inference mode.
@@ -89,6 +116,21 @@ The direct runtime takes an explicit synchronous schedule. The convenience `Open
 ## Measurements for this code
 
 RTX 4090 with 48 GiB memory, BF16, 384×320, 9 video frames, 32 actions, and 10 steps. Timing covers CPU image/state inputs through CPU physical actions, including preprocessing, with a warm text cache. Loading, first compilation/capture, video decoding, and networking are excluded.
+
+**v0.2.0 offline switch check:** 30 warm requests per setting on one repeated observation, with fixed FFN algorithms. The motion callback was forced to return 0.10 m or 0.01 m to exercise both schedules; these are execution measurements, not a natural motion distribution or closed-loop evaluation.
+
+| Enabled switches | Full Transformer evaluations | Mean latency |
+| --- | ---: | ---: |
+| Neither (default Parallel) | 10 | 211.76 ms |
+| Token reuse | 10 | 211.45 ms |
+| Adaptive, forced 2F | 2 | 57.46 ms |
+| Adaptive, forced 4F | 4 | 96.25 ms |
+| Both, forced 2F | 2 | 58.53 ms |
+| Both, forced 4F | 4 | 96.33 ms |
+
+Token reuse refreshed 32/120 observation positions after initialization. This sequential single-fixture experiment shows **no clear extra latency benefit from token reuse** in the current batched Parallel path. The large reduction comes from fewer full Transformer evaluations. Raw samples, numerical differences and conditions are in [switches.json](evidence/switches.json). These approximate outputs have not been evaluated for task success.
+
+Earlier incremental measurements of the default path:
 
 | Independent paired experiment | Mean baseline → candidate latency | Pairs |
 | --- | ---: | ---: |
@@ -115,13 +157,16 @@ python -m WAMInfer.benchmark \
 
 Tests require CUDA and native OpenWAM dependencies. The NPZ contains an HWC uint8 `image` and `proprio`. The benchmark defaults to 10 warmups and 30 measured requests. It measures warm-request latency on your machine; it does not run closed-loop task-success evaluation or replace fixed-algorithm numerical checks.
 
+Add `--reuse-tokens` independently. For adaptive inference add `--adaptive-2f4f --motion-metric your_module:displacement`, where `displacement(actions, raw_proprio)` returns metres. This benchmark repeats one identical observation; token reuse measurements do not represent a changing scene.
+
 ## Code map
 
-The core contains **9 Python files / 2021 lines** and **2 C++ files / 411 lines**, including comments and blank lines, excluding tests and the benchmark.
+The core contains **10 Python files / 2231 lines** and **2 C++ files / 411 lines**, including comments and blank lines, excluding tests and the benchmark. The two switches add one small module and 210 net Python lines over v0.1.0.
 
 | Files | Responsibility |
 | --- | --- |
 | `runtime.py`, `preparation.py` | Request lifecycle, sampler, inputs, conditioning, clean-frame preparation |
+| `approximation.py` | Token refresh selection/history and motion-budget decision |
 | `blocks.py`, `joint.py` | Model adapters, compiled phases, joint attention, branch scheduling |
 | `graphs.py` | CUDA Graph buffers/replay and text/VAE execution |
 | `ffn.py`, `_cublaslt_inference.cpp` | Prepared FFN weights, cuBLASLt plans and workspace |

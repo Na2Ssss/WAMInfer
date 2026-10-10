@@ -2,6 +2,20 @@
 
 本文记录当前 WAMInfer 的独立代码验证与增量测量。[RealtimeWAM 论文](https://arxiv.org/abs/2610.10079)中的主表还包含跨观测 token 复用及自适应 2F/4F，并使用闭环 rollout 平均延时；本仓库 v0.1.0 未发布完整方法和论文评测流程，因此下文约 217 ms 的数据不等于论文主表的 63.09 ms，也不对应论文某一行的已验证复现。论文使用的 OpenWAM Native 参照提交和这里的外接包参照版本也不同，详见论文附录 C.1。
 
+## v0.2.0：两个独立开关
+
+Parallel 继续作为唯一执行路径。新增 `reuse_tokens`（跨观测 FFN 复用）和 `adaptive_2f4f`（10 次 Euler 更新中的 2/4 次 Transformer 残差刷新），默认均关闭。核心 Python 从 2021 增至 2231 行，增加一个实现文件；上游 OpenWAM 源码和既有 Triton/C++ 算子未修改。
+
+- A100 和 RTX 4090 上完整测试集分别 **20 项通过**。新增测试覆盖 RGB 必选 token、容量取整、特征排序及相同分数的确定性选择；实际 FFN 行数缩减和当前门控；两个开关单开/同时开启；Graph replay 下历史刷新；prompt、权重和 episode 变化后的全量刷新；2F/4F 共享前缀、10 次采样更新、跳过 Transformer 时仍执行当前输出头。
+- 关闭两个开关，使用相同原生小模型和输入，与 `7b2da36` 的 6 组固定输入逐字节比较：1/3 个 latent 帧 × 1/2/10 步，动作和视频 latent 共 **12 份输出完全一致**。这些是实际上游层的随机权重夹具，不代表完整 checkpoint 的任务精度。
+- wheel 已构建，包含新的 `approximation.py` 和两份 C++ 源码。源码哈希与新增验证记录见 [switches.json](evidence/switches.json)。旧 [verification.json](evidence/verification.json) 保留 v0.1.0 的历史记录。
+
+两个开关开启后不要求与 Parallel 数值相等。尚未重跑闭环任务成功率，因此这里不宣称复现论文的精度或延时；位移回调必须按实际机器人动作语义配置。
+
+完整 RoboTwin checkpoint 在 48 GiB RTX 4090 上通过六种开关/门控组合的离线检查。两个开关关闭时，固定 FFN 算法的动作输出与既有完整模型参考逐字节一致；只开 token 复用的首个全量观测也一致。每种设置预热后重复同一观测 30 次，平均延时分别为 Parallel **211.76 ms**、token 复用 **211.45 ms**、仅自适应 2F/4F **57.46/96.25 ms**、双开 2F/4F **58.53/96.33 ms**。门控回调人为返回 0.10/0.01 米，目的仅是覆盖两个分支，不是轨迹上的真实位移统计。
+
+这些顺序测量中，token 复用没有显示出明确额外延时收益。当前路径把未来帧与选中的当前帧行合批，容量是否处于低延时区间仍需针对这个调度实测。2F/4F 的输出确有数值差异，动作各维的单位不同，不能将最大绝对坐标差直接解释为米或成功率。
+
 初始发布 `846ce85` 的计算代码原样导入自已验证外接版本 `76bade23494774278dbc6e036d5793214adff191`，原生 OpenWAM 参照版本为 `898e2f96c02c172f078c17ff85a055a6bbd419a2`。当前源码哈希、初始版本哈希、固定 FFN 配置、正确性结果及视频哈希在 [verification.json](evidence/verification.json)；逐次延时样本在 [latency.json](evidence/latency.json)。下文完整 checkpoint 与延时数据来自初始发布前的审计。
 
 ## 内部参数检查精简

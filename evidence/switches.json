@@ -1,0 +1,503 @@
+{
+  "version": "0.2.0",
+  "baseline_commit": "7b2da36a721f92b625534350358612dafce9e46f",
+  "core_python_files": 10,
+  "core_python_lines": 2231,
+  "net_core_python_lines_added": 210,
+  "source_sha256": {
+    "WAMInfer/__init__.py": "e06e16c44aec6315a9697434edf186287a8abbaedc74c266e7908f0f635a95ed",
+    "WAMInfer/_cublaslt_inference.cpp": "126f86137d91df2cfa14750e8b1e7c524a55df4211ceba5388069161a6192eea",
+    "WAMInfer/_inference_guards.cpp": "fbd0dcf4d35fe48abae30841b2ef7eeff4e2777fe2a782db8dec75231c839346",
+    "WAMInfer/_triton_attention.py": "087b8dbddf1d65fb03531529df6a5d76a794f71bd6e57f264f8e70b72fdd53f9",
+    "WAMInfer/_triton_inference.py": "b5764c3a8757dd41f8714be21fab62c8ad12561b2ae9fc4a88530b49f4271b5c",
+    "WAMInfer/approximation.py": "9cd78212869d881266d72938fea3a1ff188929c98f5015cf26cb36e4c43a4eb0",
+    "WAMInfer/benchmark.py": "f039ff4e722437057d7964a484f9bbcaa5435a3cecbd27af14092ec3bb72a57d",
+    "WAMInfer/blocks.py": "bac823a5e047f7b7c5dace41c55511bcfbd399240e73fc24ab859c0445199fc4",
+    "WAMInfer/ffn.py": "ea5bc2fa98767cfd4f2b783104f8ba5d548e7a023f9241d19a7582411bbaf939",
+    "WAMInfer/graphs.py": "5fc97ddb16cd338d176e6208768ef4b572ae852199c85a630f141cf4a368e95d",
+    "WAMInfer/joint.py": "f28f3c2c99954f28f8e816fabb710eb8bcf20b3d756be7352a76c2a4d66ae9a8",
+    "WAMInfer/preparation.py": "6be28ea7b285e6c0c3aca46dbb2abb7cd994a1c029e7de09c389cd7f73f7f1cf",
+    "WAMInfer/runtime.py": "0e4eff80ac0a3e730d3cabeb5851b1471d762b8d7cc81870aa7c9a18dbd904f0"
+  },
+  "tests": {
+    "device": "NVIDIA A100-SXM4-80GB",
+    "suite_passed": 20,
+    "final_changed_test_file_passed": 6,
+    "rtx4090_suite_passed": 20,
+    "rtx4090_warnings": "Unset TORCH_CUDA_ARCH_LIST; complex-op TorchInductor fallback (existing upstream RoPE)."
+  },
+  "default_path_byte_equality": {
+    "cases": 6,
+    "arrays": 12,
+    "latent_frames": [
+      1,
+      3
+    ],
+    "euler_steps": [
+      1,
+      2,
+      10
+    ],
+    "fixture": "Small real upstream layers with deterministic random weights; BF16 head_dim=128",
+    "all_equal": true
+  },
+  "approximations": {
+    "token_rgb_threshold_255": 5,
+    "quiet_reserve_fraction": 0.25,
+    "default_refresh_capacities": [
+      32,
+      64,
+      96,
+      120
+    ],
+    "schedules": [
+      [
+        0,
+        3
+      ],
+      [
+        0,
+        3,
+        6,
+        9
+      ]
+    ],
+    "euler_updates": 10,
+    "default_motion_threshold_m": 0.08,
+    "motion_callback": "Denormalized CPU NumPy actions to maximum physical displacement in metres",
+    "closed_loop_success_evaluated": false
+  },
+  "packaging": {
+    "wheel_built": true,
+    "wheel_import_and_cli": true,
+    "cpp_sources_match": true
+  },
+  "full_checkpoint": {
+    "device": "RTX 4090 with 48 GiB memory",
+    "checkpoint": "Existing OpenWAM RoboTwin offline deployment fixture; weights and request not bundled",
+    "geometry": {
+      "height": 384,
+      "width": 320,
+      "num_frames": 9,
+      "output_actions": 32,
+      "euler_updates": 10
+    },
+    "default_byte_equal_to_prior_full_checkpoint_reference": true,
+    "token_reuse_first_observation_byte_equal_to_default": true,
+    "all_outputs_finite": true,
+    "no_first_forward_recaptures_during_timing": true,
+    "protocol": "4 warmups after initial request, then 30 sequential repeated identical observations per setting, CPU image/state through denormalized CPU actions, no video decode. Forced motion_metric=0.10 or 0.01 metres; not a natural motion distribution, paired latency study, or closed-loop success evaluation.",
+    "token_reuse_latency_conclusion": "No clear extra benefit in this single-fixture batched Parallel path; hardware capacities need deployment-specific profiling.",
+    "numerical_difference_units": "max_abs_vs_parallel is over all denormalized action dimensions; mixed units, not a distance in metres.",
+    "fixed_ffn_configurations": {
+      "(360, (14336, 3072), (1, 14336), True)": [
+        21,
+        24,
+        9,
+        3,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      "(360, (3072, 14336), (1, 3072), False)": [
+        30,
+        18,
+        0,
+        5,
+        1,
+        1,
+        0,
+        0,
+        0
+      ],
+      "(240, (14336, 3072), (1, 14336), True)": [
+        21,
+        24,
+        9,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "(240, (3072, 14336), (1, 3072), False)": [
+        6,
+        18,
+        16,
+        4,
+        2,
+        1,
+        0,
+        0,
+        0
+      ],
+      "(272, (14336, 3072), (1, 14336), True)": [
+        21,
+        18,
+        12,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "(272, (3072, 14336), (1, 3072), False)": [
+        6,
+        18,
+        16,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      "(304, (14336, 3072), (1, 14336), True)": [
+        21,
+        18,
+        12,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "(304, (3072, 14336), (1, 3072), False)": [
+        6,
+        18,
+        16,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "(336, (14336, 3072), (1, 14336), True)": [
+        21,
+        24,
+        9,
+        3,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      "(336, (3072, 14336), (1, 3072), False)": [
+        30,
+        18,
+        0,
+        5,
+        1,
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    "measurements": {
+      "parallel": {
+        "mean_ms": 211.7559584012876,
+        "median_ms": 211.7672716267407,
+        "p95_ms": 212.69489307887852,
+        "samples_ms": [
+          213.52285193279386,
+          211.92326303571463,
+          210.65391786396503,
+          210.35794215276837,
+          211.11384639516473,
+          212.5695003196597,
+          211.60688204690814,
+          211.08032995834947,
+          210.85937693715096,
+          211.86340227723122,
+          212.797487154603,
+          212.32101926580071,
+          211.71435015276074,
+          211.7000869475305,
+          211.7216899059713,
+          212.32654619961977,
+          211.25364117324352,
+          211.41864266246557,
+          211.3930769264698,
+          211.8264432065189,
+          212.29344978928566,
+          211.51334373280406,
+          211.87345311045647,
+          211.36365178972483,
+          212.23049983382225,
+          212.0706127025187,
+          211.56886080279946,
+          211.95266535505652,
+          211.8128533475101,
+          211.9750650599599
+        ],
+        "max_abs_vs_parallel": 0.0,
+        "stats": {
+          "full_evaluations": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "refreshed_tokens": null,
+          "motion_m": null
+        }
+      },
+      "reuse": {
+        "mean_ms": 211.44845474821827,
+        "median_ms": 211.3213101401925,
+        "p95_ms": 212.4448588117957,
+        "samples_ms": [
+          213.7815742753446,
+          210.93632373958826,
+          210.69664880633354,
+          210.16212180256844,
+          210.66007623448968,
+          212.5316341407597,
+          211.28306118771434,
+          210.37418814375997,
+          210.59509692713618,
+          210.9802239574492,
+          211.74943074584007,
+          211.3079591654241,
+          210.47361567616463,
+          210.80513019114733,
+          211.57747320830822,
+          211.87378512695432,
+          210.97902162000537,
+          210.8590817078948,
+          210.94892406836152,
+          212.0470511727035,
+          212.21360564231873,
+          211.93135110661387,
+          211.27100894227624,
+          211.3346611149609,
+          211.95233799517155,
+          212.04363694414496,
+          212.2476166114211,
+          211.78913721814752,
+          211.7090648971498,
+          212.33880007639527
+        ],
+        "max_abs_vs_parallel": 0.00390625,
+        "stats": {
+          "full_evaluations": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ],
+          "refreshed_tokens": 32,
+          "motion_m": null
+        }
+      },
+      "adaptive_2F": {
+        "mean_ms": 57.456380020206176,
+        "median_ms": 57.417211355641484,
+        "p95_ms": 57.74813101161271,
+        "samples_ms": [
+          57.205424178391695,
+          57.38960113376379,
+          57.274706196039915,
+          57.20620509237051,
+          57.32381623238325,
+          57.36324796453118,
+          57.84671800211072,
+          57.408096734434366,
+          57.651422917842865,
+          57.4263259768486,
+          57.33735021203756,
+          57.3763707652688,
+          57.397081051021814,
+          57.3067469522357,
+          57.52820707857609,
+          57.56877129897475,
+          57.57275829091668,
+          57.72151192650199,
+          57.426514104008675,
+          57.36714415252209,
+          57.27339396253228,
+          57.30660678818822,
+          57.43009224534035,
+          57.435744907706976,
+          57.550942059606314,
+          57.362459134310484,
+          57.5001067481935,
+          57.639535050839186,
+          57.75606259703636,
+          57.73843685165048
+        ],
+        "max_abs_vs_parallel": 0.710925817489624,
+        "stats": {
+          "full_evaluations": [
+            0,
+            3
+          ],
+          "refreshed_tokens": null,
+          "motion_m": 0.1
+        }
+      },
+      "adaptive_4F": {
+        "mean_ms": 96.24831032318373,
+        "median_ms": 96.247035311535,
+        "p95_ms": 96.55052330344915,
+        "samples_ms": [
+          95.97000433132052,
+          95.93755705282092,
+          95.96215467900038,
+          96.11740382388234,
+          96.10811294987798,
+          96.74156690016389,
+          96.60290600731969,
+          96.14319587126374,
+          96.01977979764342,
+          96.4864999987185,
+          96.26664221286774,
+          96.04698000475764,
+          96.06922511011362,
+          96.24858573079109,
+          96.24499501660466,
+          96.33125085383654,
+          96.27790609374642,
+          96.30286740139127,
+          96.34142508730292,
+          96.24548489227891,
+          96.37678787112236,
+          96.442308742553,
+          96.46627632901073,
+          96.21297987177968,
+          96.07741516083479,
+          96.32006892934442,
+          96.39176120981574,
+          96.22960584238172,
+          96.37699089944363,
+          96.09057102352381
+        ],
+        "max_abs_vs_parallel": 0.0078125,
+        "stats": {
+          "full_evaluations": [
+            0,
+            3,
+            6,
+            9
+          ],
+          "refreshed_tokens": null,
+          "motion_m": 0.01
+        }
+      },
+      "combined_2F": {
+        "mean_ms": 58.529620695238314,
+        "median_ms": 58.33428888581693,
+        "p95_ms": 60.16010909806936,
+        "samples_ms": [
+          61.01544480770826,
+          58.49048215895891,
+          58.07114904746413,
+          58.243957813829184,
+          58.13842220231891,
+          58.4567510522902,
+          58.04923828691244,
+          58.828475419431925,
+          58.05757408961654,
+          58.43346333131194,
+          58.19185497239232,
+          58.41086385771632,
+          58.336841873824596,
+          58.707524091005325,
+          58.16895281895995,
+          58.358453679829836,
+          58.07799892500043,
+          58.76177875325084,
+          58.2035006955266,
+          58.66604018956423,
+          58.22523403912783,
+          58.397047221660614,
+          58.136160019785166,
+          61.28345895558596,
+          58.03597392514348,
+          58.259356301277876,
+          58.35314001888037,
+          59.1146987862885,
+          58.08304762467742,
+          58.33173589780927
+        ],
+        "max_abs_vs_parallel": 0.710925817489624,
+        "stats": {
+          "full_evaluations": [
+            0,
+            3
+          ],
+          "refreshed_tokens": 32,
+          "motion_m": 0.1
+        }
+      },
+      "combined_4F": {
+        "mean_ms": 96.32723525476952,
+        "median_ms": 96.15639876574278,
+        "p95_ms": 97.32503218110651,
+        "samples_ms": [
+          96.00094379857183,
+          96.61365021020174,
+          96.26199398189783,
+          95.92315601184964,
+          95.98102513700724,
+          95.9597178734839,
+          96.30242735147476,
+          96.01662680506706,
+          96.03497898206115,
+          96.12655732780695,
+          96.13495972007513,
+          95.85209423676133,
+          96.66824573650956,
+          96.27962624654174,
+          96.46657714620233,
+          96.17783781141043,
+          95.78634612262249,
+          99.28536973893642,
+          97.86240290850401,
+          96.40273032709956,
+          96.47567197680473,
+          96.07205400243402,
+          95.88357107713819,
+          96.13064490258694,
+          96.45000426098704,
+          96.18450002744794,
+          95.97040014341474,
+          95.95539793372154,
+          96.29287291318178,
+          96.26467293128371
+        ],
+        "max_abs_vs_parallel": 0.0078125,
+        "stats": {
+          "full_evaluations": [
+            0,
+            3,
+            6,
+            9
+          ],
+          "refreshed_tokens": 32,
+          "motion_m": 0.01
+        }
+      }
+    }
+  }
+}

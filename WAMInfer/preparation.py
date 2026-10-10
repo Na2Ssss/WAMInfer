@@ -180,9 +180,11 @@ class FirstFramePreparation:
         self.architecture = architecture
         self.prefills = 0
         self.graph = CudaGraphForward(architecture._forward_impl, reuse_unchanged_inputs=True)
+        self.variants = {}
 
     def close(self):
         self.graph.reset()
+        self.variants.clear()
 
     def run_first(self, noisy_actions, **inputs):
         arch = self.architecture
@@ -198,6 +200,13 @@ class FirstFramePreparation:
             raise ValueError("First-frame preparation requires exactly one clean latent frame.")
         if "_inference_first_frame" in inputs or "_inference_record_first_frame" in inputs:
             raise ValueError("The first evaluation must use the current observation without an existing bank.")
-        result = self.graph(noisy_actions, **inputs, _inference_record_first_frame=True)
+        reuse = inputs.get("_inference_token_reuse")
+        graph = self.graph
+        if reuse is not None:
+            key = reuse["count"]
+            if key not in self.variants:
+                self.variants[key] = CudaGraphForward(arch._forward_impl, reuse_unchanged_inputs=True)
+            graph = self.variants[key]
+        result = graph(noisy_actions, **inputs, _inference_record_first_frame=True)
         self.prefills += 1
         return result

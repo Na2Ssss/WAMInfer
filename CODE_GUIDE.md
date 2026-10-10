@@ -1,6 +1,6 @@
-# 沿着一次推理读懂 2021 行代码
+# 沿着一次推理读懂 2231 行代码
 
-这是 [RealtimeWAM 论文](https://arxiv.org/abs/2610.10079)的首批部分代码发布，当前仅提供 OpenWAM Parallel 路径。FastWAM、跨观测 token 复用、运动自适应 2F/4F 和完整论文评测入口尚未包含；本文介绍当前仓库的实现，不能将它等同于论文的完整 Prefill/prediction 调度或全部实验配置。
+这是 [RealtimeWAM 论文](https://arxiv.org/abs/2610.10079)的 OpenWAM 外接实现。Parallel 始终启用，`reuse_tokens` 和 `adaptive_2f4f` 是两个独立、默认关闭的有损开关。没有额外 baseline 模式；FastWAM 和完整论文评测入口尚未包含。
 
 这套代码做的是**给现有 OpenWAM 增加一条更快的执行路径**。原库提供模型定义、权重、采样规则和归一化；这里组织计算顺序，准备可复用的中间结果，并调用更合适的 GPU 算子。
 
@@ -10,24 +10,25 @@
 
 | 文件 | 行数 | 负责的事情 | 先看哪里 |
 | --- | ---: | --- | --- |
-| [`runtime.py`](WAMInfer/runtime.py) | 298 | 接口、采样循环、准备与释放资源 | `OpenWAM.generate`、`Runtime._generate` |
-| [`preparation.py`](WAMInfer/preparation.py) | 203 | 图像/文本准备、条件 K/V、时间调制、当前帧 prefill | `prepare_inputs`、`ConditioningPreparation` |
-| [`blocks.py`](WAMInfer/blocks.py) | 276 | 适配原模型，将每层拆成可调度的阶段 | `View`、两个 Adapter |
+| [`runtime.py`](WAMInfer/runtime.py) | 404 | 接口、采样循环、准备与释放资源 | `OpenWAM.generate`、`Runtime._generate` |
+| [`preparation.py`](WAMInfer/preparation.py) | 212 | 图像/文本准备、条件 K/V、时间调制、当前帧 prefill | `prepare_inputs`、`ConditioningPreparation` |
+| [`blocks.py`](WAMInfer/blocks.py) | 290 | 适配原模型，将每层拆成可调度的阶段 | `View`、两个 Adapter |
+| [`approximation.py`](WAMInfer/approximation.py) | 81 | token 预算与历史、运动自适应决策 | `TokenReuse`、`MotionRefinement` |
 | [`joint.py`](WAMInfer/joint.py) | 165 | Video/Action 双 stream 调度、联合 attention | `ParallelJointLoop._run` |
 | [`graphs.py`](WAMInfer/graphs.py) | 251 | CUDA Graph、输入刷新、文本和 VAE 执行 | `CudaGraphForward._replay` |
 | [`ffn.py`](WAMInfer/ffn.py) | 118 | 准备 FFN 权重布局和 cuBLASLt 执行计划 | `PreparedFFN.prepare/forward` |
 | [`_triton_inference.py`](WAMInfer/_triton_inference.py) | 221 | 融合归一化、调制、残差和 RoPE | `_modulated_norm`、`_qk_rms_rope_kernel` |
 | [`_triton_attention.py`](WAMInfer/_triton_attention.py) | 484 | 不同 mask/缓存布局的 attention kernel | `_attention_kernel`、`_split_attention_kernel` |
 | [`__init__.py`](WAMInfer/__init__.py) | 5 | 导出 `OpenWAM` 和 `accelerate` | 整个文件 |
-| **核心 Python 合计** | **2021** | 包括注释和空行 | |
+| **核心 Python 合计** | **2231** | 包括注释和空行 | |
 
-另外还有 `_cublaslt_inference.cpp` 197 行、`_inference_guards.cpp` 214 行，以及 benchmark 63 行、测试及辅助代码 530 行。2021 不是整个仓库所有代码的总行数。
+另外还有 `_cublaslt_inference.cpp` 197 行、`_inference_guards.cpp` 214 行。benchmark 和测试不计入核心行数。两个开关相对 v0.1.0 净增 210 行核心 Python，只增加一个实现文件。
 
 ## 1. 入口：接入原模型
 
-[`OpenWAM.__init__`](WAMInfer/runtime.py#L253) 调用原库加载 checkpoint，将原 architecture 保存到 `original`，再创建 `Runtime(original)`。
+[`OpenWAM.__init__`](WAMInfer/runtime.py) 调用原库加载 checkpoint，将原 architecture 保存到 `original`，再创建 `Runtime(original)`。
 
-`Runtime`、`VideoAdapter`、`ActionAdapter` 通过 [`View`](WAMInfer/blocks.py#L56) 访问原对象：本地没有的属性转发给 `_native`。因此模型的 block、层参数和 scheduler 继续来自原模型；外接层会额外建立打包权重、缓存和工作空间，但没有另造一套模型定义。
+`Runtime`、`VideoAdapter`、`ActionAdapter` 通过 [`View`](WAMInfer/blocks.py) 访问原对象：本地没有的属性转发给 `_native`。因此模型的 block、层参数和 scheduler 继续来自原模型；外接层会额外建立打包权重、缓存和工作空间，但没有另造一套模型定义。
 
 `OpenWAM.generate` 负责方便调用：构造原生同步 schedule、归一化 proprio，交给 `Runtime.generate`。后者用锁保证同一个 runtime 的请求顺序执行，因为静态 Graph 输入和 FFN 工作空间会被复用。
 
@@ -48,7 +49,7 @@ flowchart TD
 
 ## 2. 准备：把不随去噪步变化的工作提前做
 
-[`prepare_inputs`](WAMInfer/preparation.py#L33) 准备图像 latent、文本 embedding 和初始视频噪声。图像 VAE 编码提交到独立 CUDA stream，使它能与文本/噪声准备重叠；真正使用图像 latent 前，主 stream 会等待它完成。
+[`prepare_inputs`](WAMInfer/preparation.py) 准备图像 latent、文本 embedding 和初始视频噪声。图像 VAE 编码提交到独立 CUDA stream，使它能与文本/噪声准备重叠；真正使用图像 latent 前，主 stream 会等待它完成。
 
 这里有几种生命周期不同的复用：
 
@@ -66,7 +67,7 @@ flowchart TD
 
 ## 3. 采样：10 次网络预测与状态更新
 
-[`Runtime._generate`](WAMInfer/runtime.py#L56) 是总控制循环。每一步取得当前时间条件，运行联合网络，用原生 flow scheduler 更新动作，并更新未来视频 latent。当前观测对应的 latent 会重新固定为输入图像的编码。
+[`Runtime._generate`](WAMInfer/runtime.py) 是总控制循环。每一步取得当前时间条件，运行联合网络，用原生 flow scheduler 更新动作，并更新未来视频 latent。当前观测对应的 latent 会重新固定为输入图像的编码。
 
 动作有一些非激活维度。这些维度遵循原模型规定的解析噪声路径。代码每请求在 CPU 解析一次掩码，生成整数索引并上传；每步继续执行原来的噪声更新规则。移到 CPU 的是整数/布尔准备，没有改动作的浮点更新。
 
@@ -80,7 +81,7 @@ flowchart TD
 
 第一次前向记录每层的当前帧 K/V。后续步的 Transformer 分支只重算未来视频和 Action；联合 attention 仍然能读取那 120 个当前帧的 K/V。输入准备等外围操作并非全部省略。
 
-[`FirstFramePreparation`](WAMInfer/preparation.py#L178) 和 [`ParallelJointLoop._run`](WAMInfer/joint.py#L93) 共同完成这件事。缓存按请求重建，未来帧不套用这个结论，因为它们的状态确实在变化。
+[`FirstFramePreparation`](WAMInfer/preparation.py) 和 [`ParallelJointLoop._run`](WAMInfer/joint.py) 共同完成这件事。缓存按请求重建，未来帧不套用这个结论，因为它们的状态确实在变化。
 
 ## 5. 真正的并行在 joint.py
 
@@ -121,7 +122,7 @@ flowchart TD
 
 `joint.py` 用 `torch.compile` 编译阶段，减少 Python 调度并融合能够合并的操作。编译结果仍可能包含 Triton kernel 和库调用。
 
-[`CudaGraphForward`](WAMInfer/graphs.py#L30) 在预热后捕获固定的 GPU 执行结构，后续请求刷新静态输入，再 `graph.replay()`。它减少重复提交开销；每次 replay 都会实际执行模型计算。
+[`CudaGraphForward`](WAMInfer/graphs.py) 在预热后捕获固定的 GPU 执行结构，后续请求刷新静态输入，再 `graph.replay()`。它减少重复提交开销；每次 replay 都会实际执行模型计算。
 
 其中三个细节与结果正确性直接有关：
 
@@ -145,7 +146,7 @@ flowchart TD
 
 ## 9. FFN 为什么还需要 C++
 
-FFN 的主体是两次大矩阵乘，中间经过 GELU。这里在 Ada 上使用 cuBLASLt：[`PreparedFFN`](WAMInfer/ffn.py#L48) 整理权重布局、按形状准备 plan，`_cublaslt_inference.cpp` 调用 NVIDIA 的矩阵乘实现，将 bias/GELU 放进相应 epilogue。
+FFN 的主体是两次大矩阵乘，中间经过 GELU。这里在 Ada 上使用 cuBLASLt：[`PreparedFFN`](WAMInfer/ffn.py) 整理权重布局、按形状准备 plan，`_cublaslt_inference.cpp` 调用 NVIDIA 的矩阵乘实现，将 bias/GELU 放进相应 epilogue。
 
 准备阶段选择算法并分配工作空间；热路径绑定当前张量后直接执行，不在 Graph 捕获中调优。其他受支持硬件或未准备几何使用代码中的原 FFN 路径。
 
@@ -162,6 +163,18 @@ FFN 的主体是两次大矩阵乘，中间经过 GELU。这里在 Ada 上使用
 最后一次联合 attention 之前的 Video K/V 仍被 Action 使用，所以仍需计算。请求视频输出时，尾部也要保留。单步采样承担当前帧 prefill 的路径继续执行完整前向。
 
 `close()` 则释放 Graph、FFN plan 和附加 buffer，恢复外接前的原模型使用方式；这个过程也有测试。
+
+## 11. 两个有损开关具体省在哪里
+
+`reuse_tokens=True` 省的是**不同观测之间部分当前帧 token 的 FFN**。第一层完整计算；RGB 变化超过 5/255 的位置必须刷新，并为其他位置预留 25% 名额。所需数量向上取一个固定容量（默认 32/64/96/120），剩余名额用第一层特征变化排序填满，分数相同时按位置顺序决定。后续层把选中的当前帧行与所有未来帧行一起送进 FFN，再把结果写回缓存。没有选中的位置保留上次 FFN 输出；attention 和本次残差门控继续重算。
+
+缓存历史只在请求成功完成后提交一次，CUDA Graph 预热和捕获不推进历史。不同 token 容量各自保留 Graph，切换容量时无需反复捕获。首个观测、prompt/权重/几何变化后全量刷新；新 episode、相机或裁剪方式变化时调用 `model.reset()`。这与第 4 节的请求内 K/V 复用是两件事。
+
+`adaptive_2f4f=True` 省的是**去噪过程中的完整 Transformer 计算**。仍有 10 次 Euler 更新，但先只在第 0、3 次更新刷新 Transformer 的输入到输出残差。其他步重新嵌入本次 latent，加上缓存残差，再计算本步输出头，没有直接复用旧速度预测。第 3 次完整前向后，从粗动作估计位移；不超过 0.08 米则再计算第 6、9 次完整前向，否则使用 2F。两条路径从同一个前缀继续。
+
+位移由 `motion_metric(actions)` 回调返回，输入是反归一化后的 NumPy 动作，输出单位是米。绝对 XYZ 动作可以直接减当前末端位置；关节动作要先做正运动学；增量控制要匹配控制器的限幅、尺度和累加方式。机器人相关逻辑放在调用方，推理包不用加入一套机器人配置框架。
+
+两个开关默认关闭，关闭时不创建跨观测 FFN 历史、不跳 Transformer。开启时允许近似，不能再把结果称为无损。`model.architecture.last_stats` 可以查看本次实际完整计算的位置和 token 数量。
 
 ## 建议阅读顺序
 

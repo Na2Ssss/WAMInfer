@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "waminfer"
-version = "0.1.0"
-description = "OpenWAM Parallel inference runtime; initial partial code release for RealtimeWAM"
+version = "0.2.0"
+description = "OpenWAM Parallel inference with optional token reuse and adaptive 2F/4F"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}

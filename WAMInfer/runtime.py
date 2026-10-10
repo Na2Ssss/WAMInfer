@@ -1,4 +1,4 @@
-"""Parallel-only inference, sharing upstream OpenWAM's model and weights."""
+"""Parallel inference with two optional approximations; upstream weights stay shared."""
 
 import threading
 from functools import partial
@@ -10,10 +10,19 @@ from WAMInfer.ffn import PreparedFFN
 from WAMInfer.graphs import CudaGraphForward, TextEncodeGraph, VAEEncodeGraph, module_guard
 from WAMInfer.joint import JointDriver, ParallelJointLoop
 from WAMInfer.preparation import ConditioningPreparation, FirstFramePreparation
+from WAMInfer.approximation import TokenReuse, MotionRefinement
 
 
 class Runtime(View):
-    def __init__(self, architecture):
+    def __init__(
+        self,
+        architecture,
+        *,
+        reuse_tokens=False,
+        adaptive_2f4f=False,
+        refresh_buckets=(32, 64, 96, 120),
+        motion_threshold=0.08,
+    ):
         super().__init__(architecture)
         if (
             architecture.device.type != "cuda"
@@ -45,6 +54,16 @@ class Runtime(View):
         self._first_frame_preparation = FirstFramePreparation(self)
         self._conditioning_preparation = ConditioningPreparation(self)
         self._inference_eval_guard = self._inference_module_guard = None
+        self.token_reuse = TokenReuse(refresh_buckets) if reuse_tokens else None
+        self.adaptive_2f4f, self.motion_threshold = adaptive_2f4f, motion_threshold
+        self._residual_graphs = {}
+        self.last_stats = {}
+
+    def reset(self):
+        """Start a new episode/camera stream without discarding warmed graphs."""
+        with self._lock:
+            if self.token_reuse is not None:
+                self.token_reuse.reset()
 
     def generate(self, *args, **kwargs):
         with self._lock:
@@ -67,17 +86,12 @@ class Runtime(View):
         decode_video: bool = False,
         proprio: torch.Tensor | None = None,
         active_action_mask: torch.Tensor | None = None,
+        motion_metric=None,
     ) -> dict:
-        """Evaluate every Action block at every sampler step.
-
-        The caller supplies the original synchronous schedule. Every future-frame
-        token needed by the sampler traverses every block. On the final step,
-        action-only requests omit the unused final Video post-attention/head.
-        The current frame may be computed once per request and shared across its evaluations.
-        Native clean-frame clamping and inactive-action normalization are retained.
-        """
+        """Run the original sampler; optional switches reduce Transformer/FFN work."""
         import math
 
+        refinement = MotionRefinement(motion_metric, self.motion_threshold, schedule) if self.adaptive_2f4f else None
         eval_guard = self._inference_eval_guard
         if eval_guard is None or not eval_guard.all_eval():
             self.eval()
@@ -123,6 +137,9 @@ class Runtime(View):
             inactive = inactive.nonzero(as_tuple=True)[0].to(device, non_blocking=True)
         inactive_noise = None
         inputs = self.prepare_inference_inputs(inputs)
+        reuse = observation = None
+        if self.token_reuse is not None:
+            reuse, observation = self.token_reuse.begin(first_frame_image, inputs, prompt, vb._dit_patch_size)
         conditioning = self._conditioning_preparation
         inputs = conditioning.prepare(inputs, schedule)
         if input_stream is not None:
@@ -136,16 +153,38 @@ class Runtime(View):
         first_frame = self._first_frame_preparation if inputs["latents"].shape[2] > 1 else None
         train_v = float(self.video_scheduler.num_train_timesteps)
         train_a = float(self.action_scheduler.num_train_timesteps)
+        full_steps = []
         for index, ((tv, ta), (tv_next, ta_next)) in enumerate(zip(schedule, schedule[1:])):
             torch.compiler.cudagraph_mark_step_begin()
             forward_inputs = conditioning.step_inputs(inputs, index)
+            fresh = refinement is None or refinement.full(index)
+            if fresh:
+                full_steps.append(index)
+            if refinement is not None:
+                if fresh:
+                    forward_inputs["_inference_record_residual"] = index != 9 or decode_video
+                else:
+                    forward_inputs["_inference_residual"] = refinement.residual
             if first_frame is not None and index == 0:
-                (video_prediction, action_prediction, bank) = first_frame.run_first(action_latents, **forward_inputs)
-                inputs["_inference_first_frame"] = bank
+                if reuse is not None:
+                    forward_inputs["_inference_token_reuse"] = reuse
+                result = first_frame.run_first(action_latents, **forward_inputs)
+                inputs["_inference_first_frame"] = result[2]
+                if reuse is not None:
+                    features, cache = result[3:5]
             else:
                 if not decode_video and index == len(schedule) - 2:
                     forward_inputs["_inference_action_only"] = True
-                (video_prediction, action_prediction) = self.forward(action_latents, **forward_inputs)
+                result = self.forward(action_latents, **forward_inputs)
+            video_prediction, action_prediction = result[:2]
+            if refinement is not None and fresh:
+                if index != 9:
+                    refinement.residual = result[-1]
+                if index == 3:
+                    clean = action_latents.float() - (ta / train_a) * action_prediction.float()
+                    if inactive is not None:
+                        clean[..., inactive] = 0
+                    refinement.decide(self._decode_actions(clean))
             if video_prediction is not None:
                 inputs["latents"] = inputs["latents"] + video_prediction * ((tv_next - tv) / train_v)
                 if reference is not None:
@@ -161,12 +200,28 @@ class Runtime(View):
             if inactive is not None:
                 action_latents[..., inactive] = inactive_noise * (ta_next / train_a)
         video = vb.decode_video(inputs["latents"]) if decode_video else None
-        actions = action_latents.squeeze(0).float().cpu().numpy()
-        if self.normalizer is not None:
-            actions = self.normalizer.unnormalize(actions)
+        actions = self._decode_actions(action_latents)
+        if reuse is not None:
+            self.token_reuse.commit(observation, features, cache)
+        self.last_stats = dict(
+            full_evaluations=tuple(full_steps),
+            refreshed_tokens=None if reuse is None else reuse["count"],
+            motion_m=None if refinement is None else refinement.amplitude,
+        )
         return {"video": video, "actions": actions}
 
+    def _decode_actions(self, latents):
+        actions = latents.squeeze(0).float().cpu().numpy()
+        if self.normalizer is not None:
+            actions = self.normalizer.unnormalize(actions)
+        return actions
+
     def forward(self, noisy_actions, **pipeline_inputs):
+        if "_inference_residual" in pipeline_inputs:
+            key = pipeline_inputs.get("_inference_action_only", False)
+            if key not in self._residual_graphs:
+                self._residual_graphs[key] = CudaGraphForward(self._forward_impl, reuse_unchanged_inputs=True)
+            return self._residual_graphs[key](noisy_actions, **pipeline_inputs)
         graph = (
             self._action_cuda_graph_forward
             if pipeline_inputs.pop("_inference_action_only", False)
@@ -186,9 +241,29 @@ class Runtime(View):
             prepared_context=inputs["_inference_action_context"],
             prepared_time=inputs["_inference_action_time"],
         )
-        (vstate, astate) = self._compiled_mot_run_joint_loop(vstate, astate)
+        reuse = inputs.get("_inference_token_reuse")
+        if reuse is not None:
+            vstate.extras.update(token_reuse=reuse, token_outputs=[])
+        before_v, before_a = vstate.hidden_states, astate.x_action
+        prefix = inputs.get("_inference_first_frame")
+        clean = prefix[1].shape[1] if prefix is not None else 0
+        residual = inputs.get("_inference_residual")
+        if residual is None:
+            (vstate, astate) = self._compiled_mot_run_joint_loop(vstate, astate)
+        else:
+            future = before_v[:, clean:] + residual[0]
+            vstate.hidden_states = torch.cat((prefix[1], future), dim=1) if prefix is not None else future
+            astate.x_action = before_a + residual[1]
         result = (None if vstate.extras["action_only"] else vb.finalize(vstate), ab.extract_prediction(astate))
-        return (*result, vstate.extras["first_frame_result"]) if vstate.extras["record_first_frame"] else result
+        if vstate.extras["record_first_frame"]:
+            bank = vstate.extras["first_frame_result"]
+            clean = bank[1].shape[1]
+            result += (bank,)
+        if reuse is not None:
+            result += (vstate.extras["token_features"], tuple(vstate.extras["token_outputs"]))
+        if inputs.get("_inference_record_residual", False):
+            result += ((vstate.hidden_states[:, clean:] - before_v[:, clean:], astate.x_action - before_a),)
+        return result
 
     def prepare_inference_inputs(self, inputs):
         vb, ab = self.video_backbone, self.action_backbone
@@ -211,10 +286,16 @@ class Runtime(View):
                 prepare_packed_weights(block.cross_attn, "kv")
                 prepare_packed_weights(block.self_attn, "qkv")
         if vb.ffn is not None:
+            if self.token_reuse is not None:
+                n = rows[0] // latents.shape[2]
+                rows += tuple(rows[0] - n + b for b in self.token_reuse.capacities(n))
             vb.ffn.prepare(rows)
         self._cuda_graph_forward.reset()
         self._action_cuda_graph_forward.reset()
         self._first_frame_preparation.close()
+        self._residual_graphs.clear()
+        if self.token_reuse is not None:
+            self.token_reuse.reset()
         vb.dit.freqs = tuple(freq.to(device=self.device) for freq in vb.dit.freqs)
         ab._sync_rope_freqs_device()
         self._inference_module_guard = module_guard(self, track_versions=True)
@@ -229,6 +310,9 @@ class Runtime(View):
             self._cuda_graph_forward.reset()
             self._action_cuda_graph_forward.reset()
             self._first_frame_preparation.close()
+            self._residual_graphs.clear()
+            if self.token_reuse is not None:
+                self.token_reuse.reset()
             self._conditioning_preparation.close()
             vb = self.video_backbone
             for graph in (vb.text_graph, vb.vae_graph):
@@ -250,9 +334,25 @@ class Runtime(View):
 class OpenWAM:
     """Checkpoint convenience API; the original architecture remains accessible."""
 
-    def __init__(self, checkpoint_dir, *, device="cuda", checkpoint_name=None):
+    def __init__(
+        self,
+        checkpoint_dir,
+        *,
+        device="cuda",
+        checkpoint_name=None,
+        reuse_tokens=False,
+        adaptive_2f4f=False,
+        refresh_buckets=(32, 64, 96, 120),
+        motion_threshold=0.08,
+    ):
         self.config, self.original = load_from_checkpoint_dir(checkpoint_dir, device=device, ckpt_name=checkpoint_name)
-        self.architecture = Runtime(self.original)
+        self.architecture = Runtime(
+            self.original,
+            reuse_tokens=reuse_tokens,
+            adaptive_2f4f=adaptive_2f4f,
+            refresh_buckets=refresh_buckets,
+            motion_threshold=motion_threshold,
+        )
         self._lock = threading.Lock()
 
     @torch.no_grad()
@@ -270,6 +370,7 @@ class OpenWAM:
         width=320,
         decode_video=False,
         active_action_mask=None,
+        motion_metric=None,
     ):
         with self._lock:
             arch = self.original
@@ -290,8 +391,13 @@ class OpenWAM:
                 width=width,
                 decode_video=decode_video,
                 active_action_mask=active_action_mask,
+                motion_metric=motion_metric,
             )
             return self.architecture.generate(schedule, prompt, **kwargs)
+
+    def reset(self):
+        with self._lock:
+            self.architecture.reset()
 
     def close(self):
         with self._lock:
