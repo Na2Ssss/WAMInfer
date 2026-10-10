@@ -1,5 +1,7 @@
 # 验证与性能记录
 
+本文记录当前 WAMInfer 的独立代码验证与增量测量。[RealtimeWAM 论文](https://arxiv.org/abs/2610.10079)中的主表还包含跨观测 token 复用及自适应 2F/4F，并使用闭环 rollout 平均延时；本仓库 v0.1.0 未发布完整方法和论文评测流程，因此下文约 217 ms 的数据不等于论文主表的 63.09 ms，也不对应论文某一行的已验证复现。论文使用的 OpenWAM Native 参照提交和这里的外接包参照版本也不同，详见论文附录 C.1。
+
 初始发布 `846ce85` 的计算代码原样导入自已验证外接版本 `76bade23494774278dbc6e036d5793214adff191`，原生 OpenWAM 参照版本为 `898e2f96c02c172f078c17ff85a055a6bbd419a2`。当前源码哈希、初始版本哈希、固定 FFN 配置、正确性结果及视频哈希在 [verification.json](evidence/verification.json)；逐次延时样本在 [latency.json](evidence/latency.json)。下文完整 checkpoint 与延时数据来自初始发布前的审计。
 
 ## 内部参数检查精简

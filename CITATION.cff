@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use WAMInfer, please cite the RealtimeWAM paper below. This is an initial partial code release."
+type: software
+title: "WAMInfer: OpenWAM Parallel inference runtime"
+version: 0.1.0
+date-released: 2026-10-10
+license: Apache-2.0
+repository-code: "https://github.com/Na2Ssss/WAMInfer"
+authors:
+  - family-names: Liu
+    given-names: Huanan
+preferred-citation:
+  type: article
+  title: "RealtimeWAM: How Fast Can I Run My World Action Model?"
+  authors:
+    - family-names: Liu
+      given-names: Huanan
+    - family-names: Li
+      given-names: Ye
+    - family-names: Ji
+      given-names: Kangye
+    - family-names: Chen
+      given-names: Xiaoyu
+    - family-names: Cui
+      given-names: Hanyun
+    - family-names: Shen
+      given-names: Yutian
+    - family-names: Meng
+      given-names: Yuan
+    - family-names: Wu
+      given-names: Chenglei
+    - family-names: Jiang
+      given-names: Jingyan
+    - family-names: Li
+      given-names: Bo
+    - family-names: Wang
+      given-names: Zhi
+  year: 2026
+  journal: arXiv
+  doi: "10.48550/arXiv.2610.10079"
+  url: "https://arxiv.org/abs/2610.10079"

@@ -1,24 +1,54 @@
 # WAMInfer
 
-OpenWAM 的外接 Parallel 推理加速包。共享原模型和权重，保留原始采样步骤，通过条件预计算、当前帧 K/V 复用、CUDA Graph、分支调度和融合算子降低推理延时。
+**OpenWAM inference runtime — initial partial code release for RealtimeWAM.**
 
-**核心为 9 个 Python 文件、2021 行，另有 2 个 C++ 扩展、411 行。** 行数包含注释和空行，不包括 benchmark、测试和文档。原生 OpenWAM 源码不在本仓库内。
+[Paper](https://arxiv.org/abs/2610.10079) · [中文源码导读](CODE_GUIDE.md) · [Validation](VALIDATION.md) · [Citation](#citation)
 
-从 [中文源码导读](CODE_GUIDE.md) 了解一次推理如何经过这些文件；[验证记录](VALIDATION.md) 说明测试条件、数值边界和测量结果。
+> **RealtimeWAM: How Fast Can I Run My World Action Model?**
+>
+> Huanan Liu, Ye Li, Kangye Ji, Xiaoyu Chen, Hanyun Cui, Yutian Shen, Yuan Meng, Chenglei Wu, Jingyan Jiang, Bo Li, and Zhi Wang
+>
+> arXiv:2610.10079, 2026
 
-## 安装与接入
+WAMInfer adds an external Parallel inference path to OpenWAM, sharing the original model and weights. It combines prepared conditioning, request-local clean-frame K/V reuse, compiled phases, fused operators, CUDA Graph replay, and Video/Action stream scheduling. No edits to upstream source files are required.
 
-先准备能正常加载 checkpoint 的 OpenWAM 环境。本包对照的原库版本为 [`898e2f96`](https://github.com/OpenWAM-Official/OpenWAM/tree/898e2f96c02c172f078c17ff85a055a6bbd419a2)。已验证环境使用 Python 3.10/3.11、PyTorch 2.7.1+cu128、对应 Triton；还需 C++/CUDA 编译工具及 Ninja，Ada 的 FFN 使用 PyTorch 环境中的 `nvidia.cublas`。
+中文说明：这是论文的首批部分代码发布，当前提供 OpenWAM 的 Parallel 推理路径；完整论文方法中的 FastWAM、跨观测 token 复用及运动自适应计算尚未包含。代码结构与执行原理见[中文导读](CODE_GUIDE.md)。
 
-在该环境中安装本仓库；`--no-deps` 保留现有 OpenWAM 依赖版本：
+## Release scope
+
+**v0.1.0 publishes the existing OpenWAM runtime, not a complete reproduction of the paper.**
+
+| Component | This release |
+| --- | --- |
+| External OpenWAM runtime, original weights and sampler updates | Included |
+| Video/Action stream overlap and input-preparation overlap | Included |
+| Clean-frame K/V reuse across denoising steps within one request | Included; rebuilt for each observation |
+| Triton attention, normalization/RoPE, and prepared FFN execution | Included |
+| CUDA Graph replay, cache invalidation, tests, and timing evidence | Included |
+| FastWAM backend | Not included |
+| Cross-observation selective FFN/token reuse and capacity filling | Not included |
+| Motion-adaptive 2F/4F Transformer residual refresh | Not included |
+| Full paper benchmark and ablation runners | Not included |
+
+The paper combines dependency-aware scheduling, hardware-aware token reuse, and motion-adaptive refinement. Its 2F/4F settings perform two/four full Transformer evaluations within ten Euler updates. This runtime instead evaluates every Action block at every configured sampler step. Its Video/Action overlap should not be equated with a verified reproduction of the paper's complete Prefill/prediction schedule.
+
+The paper reports **24.09 ms / 8.90×** for FastWAM and **63.09 ms / 10.67×** for OpenWAM, averaged over its benchmark settings. Those are results of the full framework; they are **not performance claims for this release**. See the [paper](https://arxiv.org/abs/2610.10079) for the complete protocol.
+
+## Installation
+
+Start with a working OpenWAM environment and an upstream-compatible checkpoint directory. This package targets upstream revision [`898e2f96`](https://github.com/OpenWAM-Official/OpenWAM/tree/898e2f96c02c172f078c17ff85a055a6bbd419a2); it does not install or bundle OpenWAM itself.
+
+The validated environment uses Python 3.10/3.11, PyTorch 2.7.1+cu128 and its corresponding Triton, plus a C++ compiler, CUDA development tools, and Ninja. The Ada FFN extension also uses the `nvidia.cublas` installation supplied with the PyTorch environment. Install without replacing that environment's dependencies:
 
 ```bash
-git clone https://github.com/Na2Ssss/WAMInfer.git
+git clone --branch v0.1.0 --depth 1 https://github.com/Na2Ssss/WAMInfer.git
 cd WAMInfer
 python -m pip install --no-deps --no-build-isolation -e .
 ```
 
-也可以将仓库中的 `WAMInfer/` 文件夹直接放入 OpenWAM 根目录使用。原库需要已经能够 `import openwam`；本包不自动安装另一份 OpenWAM。
+Alternatively, copy the `WAMInfer/` directory into the upstream OpenWAM root. `import openwam` must already work. Model weights and datasets are supplied separately under their respective terms.
+
+## Usage
 
 ```python
 from WAMInfer import OpenWAM
@@ -29,9 +59,9 @@ actions = result["actions"]
 model.close()
 ```
 
-`image` 为 PIL 图像，`state` 为原部署接口的 proprio。默认 384×320、9 视频帧、32 个输出动作、10 步、seed=42；`decode_video=True` 返回视频。帧数、尺寸和步数可通过 `generate` 参数设置。第一次运行包含加载、编译和 Graph 捕获，不能当作热请求延时。
+`image` is a PIL image and `state` follows the upstream deployment proprio interface. Defaults are 384×320 pixels, 9 video frames, 32 output actions, 10 sampler steps, and seed 42. Set `decode_video=True` to return video. The original architecture remains available as `model.original`.
 
-已有原生 architecture 时：
+To wrap an already loaded native architecture:
 
 ```python
 from WAMInfer import accelerate
@@ -45,44 +75,80 @@ result = fast.generate(
 architecture = fast.close()
 ```
 
-直接 runtime 使用显式 schedule；便捷入口 `OpenWAM.generate` 从 `num_inference_steps` 构造原生同步 schedule。原模型可通过 `model.original` 访问。
+The direct runtime takes an explicit synchronous schedule. The convenience `OpenWAM.generate` interface constructs the native schedule from `num_inference_steps`.
 
-## 执行范围和数值边界
+## Execution and numerical contract
 
-- CUDA BF16、head_dim=128、Wan22Ti2v、`joint_self_attn` Action 分支和原生 Wan VAE；只提供 Parallel 路径。
-- 当前帧缓存要求 `first_frame_causal`、单张 clean 观测和相应零时间步条件。缓存每请求重建，未来帧和 Action 的必要计算继续执行。
-- 同一 runtime 内请求串行化；这是单请求中 Video/Action 的 GPU 并行，不是多请求并发服务。
-- 最近的优化按**相对已有 Parallel、固定 FFN 算法的逐字节一致性**验证。历史 BF16 融合相对原生 eager 存在数值差异，不能将整个外接包宣称为与 eager 逐位相同。
-- FFN 会在准备阶段选择算法；完整性能对照固定了算法配置。新进程自动调优不等于自动复现同一组算法，配置见 [验证证据](evidence/verification.json)。
-- `_triton_*` 算子仅供内部调用，形状、布局和 dtype 由调用方保证，不再逐参数检查。缓存失效、Graph 输入刷新及运行入口的条件检查继续保留。
+- CUDA BF16, `head_dim=128`, Wan22Ti2v, `joint_self_attn` Action, and the native Wan VAE; Parallel is the only inference mode.
+- Clean-frame reuse requires `first_frame_causal` attention, one clean observation, and the corresponding zero-timestep conditioning. This cache is rebuilt for every request.
+- Calls on one runtime are serialized because Graph buffers and workspaces are reused. Parallelism overlaps branches inside a request.
+- Recent incremental changes were checked for byte equality against **the existing Parallel runtime with fixed FFN algorithms**. Historical BF16 fusions differ numerically from native eager; this package does not claim bitwise equality with native inference.
+- FFN preparation autotunes its algorithms. Reproducing the exact audited outputs requires the fixed configurations in [verification.json](evidence/verification.json); independent autotuning may select different algorithms.
+- Internal `_triton_*` operators rely on their callers for valid shape, layout, and dtype. Runtime checks for cache invalidation and Graph input refresh remain active.
 
-## 已测结果
+## Measurements for this code
 
-RTX 4090（48 GiB 配置），BF16，384×320，9 视频帧、32 动作、10 步。CPU 输入到 CPU 动作，含预处理，文本缓存命中；不含加载、首次编译、视频解码和网络传输。
+RTX 4090 with 48 GiB memory, BF16, 384×320, 9 video frames, 32 actions, and 10 steps. Timing covers CPU image/state inputs through CPU physical actions, including preprocessing, with a warm text cache. Loading, first compilation/capture, video decoding, and networking are excluded.
 
-| 独立配对实验 | 基线 → 候选平均延时 | 配对数 |
+| Independent paired experiment | Mean baseline → candidate latency | Pairs |
 | --- | ---: | ---: |
-| Action 改为与 Video FFN 重叠 | 221.383 → 217.134 ms | 120 |
-| 最新 CPU 掩码准备 | 217.281 → 217.124 ms | 120 |
+| Overlap Action with Video FFN | 221.383 → 217.134 ms | 120 |
+| Prepare action-mask indices on CPU | 217.281 → 217.124 ms | 120 |
 
-两行来自不同实验，不能相加或跨实验相减。最新改动只省 0.157 ms（0.072%）。这些是增量对照，不能当作相对原生 eager 的总加速比。原始配对样本见 [latency.json](evidence/latency.json)。
+These are incremental comparisons from separate experiments, not speedups over native eager or reproduction of the paper tables. The latest measured change saved 0.157 ms (0.072%). Removing internal argument checks subsequently reduced source size without a new latency claim.
 
-## 测试与测速
+[Validation](VALIDATION.md) documents numerical boundaries, GPU tests, and measurement conditions. [latency.json](evidence/latency.json) contains the paired samples; [verification.json](evidence/verification.json) records source hashes, FFN configurations, and verification results. Checkpoints, request fixtures, reference action arrays, and raw Nsight traces are not bundled, so the complete historical audits are not self-contained reproductions in this release.
+
+## Tests and benchmark
+
+In the configured OpenWAM environment:
 
 ```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest \
+  -c WAMInfer/pytest.ini WAMInfer/tests -q -p no:cacheprovider
+
 python -m WAMInfer.benchmark \
   --checkpoint /path/to/checkpoint \
   --input /path/to/request.npz \
   --prompt-file /path/to/prompt.txt
-
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest \
-  -c WAMInfer/pytest.ini WAMInfer/tests -q -p no:cacheprovider
 ```
 
-NPZ 包含 HWC uint8 `image` 和 `proprio`。默认测速预热 10 次、运行 30 次；它测当前机器的热请求延时，不替代固定算法的数值审计。测试需要 CUDA 和原生 OpenWAM 依赖。
+Tests require CUDA and native OpenWAM dependencies. The NPZ contains an HWC uint8 `image` and `proprio`. The benchmark defaults to 10 warmups and 30 measured requests. It measures warm-request latency on your machine; it does not run closed-loop task-success evaluation or replace fixed-algorithm numerical checks.
 
-## 来源
+## Code map
 
-初始发布 `846ce85` 从已验证外接版本 `76bade23494774278dbc6e036d5793214adff191` 原样迁入 Python/C++ 代码。当前版本进一步删除了内部算子的 75 行参数检查及无用变量，计算和启动配置保持不变；当前源码哈希及验证结果见 [verification.json](evidence/verification.json)。
+The core contains **9 Python files / 2021 lines** and **2 C++ files / 411 lines**, including comments and blank lines, excluding tests and the benchmark.
 
-外接组织方式参考 [BAC](https://github.com/ky-ji/BAC/tree/82029a6fb0573fd07f4b26088219b0eb5ccc5a67)，未加入其近似 block 跳算策略。许可证和来源说明见 [LICENSE](LICENSE)、[NOTICE](NOTICE)。
+| Files | Responsibility |
+| --- | --- |
+| `runtime.py`, `preparation.py` | Request lifecycle, sampler, inputs, conditioning, clean-frame preparation |
+| `blocks.py`, `joint.py` | Model adapters, compiled phases, joint attention, branch scheduling |
+| `graphs.py` | CUDA Graph buffers/replay and text/VAE execution |
+| `ffn.py`, `_cublaslt_inference.cpp` | Prepared FFN weights, cuBLASLt plans and workspace |
+| `_triton_inference.py`, `_triton_attention.py` | Fused GPU operators |
+| `_inference_guards.cpp` | CPU-side model and Graph input state checks |
+
+Read the [Chinese source walkthrough](CODE_GUIDE.md) for the full execution flow.
+
+## Citation
+
+If you use this code, please cite the RealtimeWAM paper. Machine-readable citation metadata is available in [CITATION.cff](CITATION.cff).
+
+```bibtex
+@misc{liu2026realtimewam,
+  title         = {RealtimeWAM: How Fast Can I Run My World Action Model?},
+  author        = {Huanan Liu and Ye Li and Kangye Ji and Xiaoyu Chen and Hanyun Cui and Yutian Shen and Yuan Meng and Chenglei Wu and Jingyan Jiang and Bo Li and Zhi Wang},
+  year          = {2026},
+  eprint        = {2610.10079},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi           = {10.48550/arXiv.2610.10079},
+  url           = {https://arxiv.org/abs/2610.10079}
+}
+```
+
+## License and provenance
+
+Apache-2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE). The initial import `846ce85` preserved the Python/C++ source from validated external snapshot `76bade23494774278dbc6e036d5793214adff191`. Commit `c8372cd` removed 75 lines of internal argument checks and unused variables while preserving arithmetic and launch settings. Source hashes are recorded in the verification evidence.
+
+The external-addon organization was informed by [BAC](https://github.com/ky-ji/BAC/tree/82029a6fb0573fd07f4b26088219b0eb5ccc5a67). This package does not implement BAC's approximate block-skipping policy. Upstream model source, weights, and datasets are not distributed here.
