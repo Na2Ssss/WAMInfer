@@ -1,4 +1,4 @@
-# 沿着一次推理读懂 2231 行代码
+# 沿着一次推理读懂 2242 行代码
 
 这是 [RealtimeWAM 论文](https://arxiv.org/abs/2610.10079)的 OpenWAM 外接实现。Parallel 始终启用，`reuse_tokens` 和 `adaptive_2f4f` 是两个独立、默认关闭的有损开关。没有额外 baseline 模式；FastWAM 和完整论文评测入口尚未包含。
 
@@ -11,18 +11,18 @@
 | 文件 | 行数 | 负责的事情 | 先看哪里 |
 | --- | ---: | --- | --- |
 | [`runtime.py`](WAMInfer/runtime.py) | 404 | 接口、采样循环、准备与释放资源 | `OpenWAM.generate`、`Runtime._generate` |
-| [`preparation.py`](WAMInfer/preparation.py) | 212 | 图像/文本准备、条件 K/V、时间调制、当前帧 prefill | `prepare_inputs`、`ConditioningPreparation` |
+| [`preparation.py`](WAMInfer/preparation.py) | 214 | 图像/文本准备、条件 K/V、时间调制、当前帧 prefill | `prepare_inputs`、`ConditioningPreparation` |
 | [`blocks.py`](WAMInfer/blocks.py) | 290 | 适配原模型，将每层拆成可调度的阶段 | `View`、两个 Adapter |
-| [`approximation.py`](WAMInfer/approximation.py) | 81 | token 预算与历史、运动自适应决策 | `TokenReuse`、`MotionRefinement` |
+| [`approximation.py`](WAMInfer/approximation.py) | 84 | token 预算与历史、运动自适应决策 | `TokenReuse`、`MotionRefinement` |
 | [`joint.py`](WAMInfer/joint.py) | 165 | Video/Action 双 stream 调度、联合 attention | `ParallelJointLoop._run` |
-| [`graphs.py`](WAMInfer/graphs.py) | 251 | CUDA Graph、输入刷新、文本和 VAE 执行 | `CudaGraphForward._replay` |
+| [`graphs.py`](WAMInfer/graphs.py) | 257 | CUDA Graph、输入刷新、文本和 VAE 执行 | `CudaGraphForward._replay` |
 | [`ffn.py`](WAMInfer/ffn.py) | 118 | 准备 FFN 权重布局和 cuBLASLt 执行计划 | `PreparedFFN.prepare/forward` |
 | [`_triton_inference.py`](WAMInfer/_triton_inference.py) | 221 | 融合归一化、调制、残差和 RoPE | `_modulated_norm`、`_qk_rms_rope_kernel` |
 | [`_triton_attention.py`](WAMInfer/_triton_attention.py) | 484 | 不同 mask/缓存布局的 attention kernel | `_attention_kernel`、`_split_attention_kernel` |
 | [`__init__.py`](WAMInfer/__init__.py) | 5 | 导出 `OpenWAM` 和 `accelerate` | 整个文件 |
-| **核心 Python 合计** | **2231** | 包括注释和空行 | |
+| **核心 Python 合计** | **2242** | 包括注释和空行 | |
 
-另外还有 `_cublaslt_inference.cpp` 197 行、`_inference_guards.cpp` 214 行。benchmark 和测试不计入核心行数。两个开关相对 v0.1.0 净增 210 行核心 Python，只增加一个实现文件。
+另外还有 `_cublaslt_inference.cpp` 197 行、`_inference_guards.cpp` 214 行。benchmark 和测试不计入核心行数。两个开关及后续缓存优化相对 v0.1.0 净增 221 行核心 Python，只增加一个实现文件。
 
 ## 1. 入口：接入原模型
 
@@ -128,7 +128,7 @@ flowchart TD
 
 1. 输入 shape、stride、dtype 或嵌套结构变化时，需要重新捕获。
 2. 同一个 Tensor 如果内容版本变了，就要重新复制输入；不能只看 Python 对象地址。
-3. 返回结果会 clone，防止下一次 replay 覆盖调用者还在使用的结果。
+3. 默认克隆返回结果。token 复用的首轮 Graph 在本次请求内借用输出，并更新 Tensor 版本，让下游识别新内容；跨请求的 FFN 历史打包后保存独立副本，成功结束才提交。
 
 普通 Graph 与最后动作 Graph 顺序执行，能够共享输入缓冲区、版本记录和内存池。共享的前提由代码检查。
 

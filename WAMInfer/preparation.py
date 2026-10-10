@@ -205,7 +205,9 @@ class FirstFramePreparation:
         if reuse is not None:
             key = reuse["count"]
             if key not in self.variants:
-                self.variants[key] = CudaGraphForward(arch._forward_impl, reuse_unchanged_inputs=True)
+                self.variants[key] = CudaGraphForward(
+                    arch._forward_impl, reuse_unchanged_inputs=True, clone_outputs=False
+                )
             graph = self.variants[key]
         result = graph(noisy_actions, **inputs, _inference_record_first_frame=True)
         self.prefills += 1

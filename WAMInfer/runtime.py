@@ -260,7 +260,7 @@ class Runtime(View):
             clean = bank[1].shape[1]
             result += (bank,)
         if reuse is not None:
-            result += (vstate.extras["token_features"], tuple(vstate.extras["token_outputs"]))
+            result += (vstate.extras["token_features"], torch.stack(vstate.extras["token_outputs"]))
         if inputs.get("_inference_record_residual", False):
             result += ((vstate.hidden_states[:, clean:] - before_v[:, clean:], astate.x_action - before_a),)
         return result

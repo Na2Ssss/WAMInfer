@@ -63,24 +63,24 @@ The following values are reported in [Table 1 of the paper](https://arxiv.org/ht
 These are results of the full paper framework. The current public release provides the OpenWAM external runtime; FastWAM and the complete closed-loop evaluation suite are not yet included. Its independent measurements are documented below.
 
 <details>
-<summary><b>Released runtime: offline latency measurements and numerical validation</b></summary>
+<summary><b>Runtime: paired latency measurements and numerical validation</b></summary>
 
-**RTX 4090, 48 GiB · BF16 · 384×320 · 9 video frames · 32 actions · 10 Euler updates.** Each setting repeats one observation for 30 warm requests with fixed FFN algorithms. Timing covers CPU image/state inputs through denormalized CPU actions, including preprocessing. Loading, compilation/capture, video decoding and networking are excluded; the text cache is warm.
+**RTX 4090, 48 GiB · BF16 · 384×320 · 9 video frames · 32 actions · 10 Euler updates.** The latest optimization reduces RGB-selection allocations and cache-copy calls. **Both columns enable token reuse:** before is v0.2.0 (`afdb28e`), after is current `main`. Each row contains 40 alternating before/after pairs with shared weights and fixed FFN algorithms.
 
-| Token reuse | Transformer evaluations | Mean latency |
-| :---: | --- | ---: |
-| Off | 10 — default Parallel | 211.76 ms |
-| On | 10 | 211.45 ms |
-| Off | Forced 2F | 57.46 ms |
-| Off | Forced 4F | 96.25 ms |
-| On | Forced 2F | 58.53 ms |
-| On | Forced 4F | 96.33 ms |
+| Input sequence | Transformer evaluations | Before | After |
+| --- | --- | ---: | ---: |
+| Repeated observation | Forced 2F | 55.35 ms | **54.89 ms** |
+| Repeated observation | Forced 4F | 94.17 ms | **93.82 ms** |
+| Repeated observation | 10F | 212.83 ms | **212.38 ms** |
+| Changing observation | Forced 2F | 55.45 ms | **55.03 ms** |
+| Changing observation | Forced 4F | 94.74 ms | **94.30 ms** |
+| Changing observation | 10F | 215.06 ms | **214.68 ms** |
 
-The motion callback was forced to return 0.10 m or 0.01 m to exercise both schedules. Token reuse refreshed 32/120 observation positions after initialization. This single-observation experiment shows **no clear additional latency benefit from token reuse** in the current batched Parallel path. Closed-loop task success has not been rerun for this release.
+Timing covers CPU image/state inputs through denormalized CPU actions, including preprocessing and pending cache copies; loading, compilation/capture, video decoding and networking are excluded. The text cache is warm. Changing inputs alternate a synthetic change in one RGB tile, retaining the 32/120 refresh capacity. The motion callback is forced to 0.10 m or 0.01 m. These are modest incremental savings of **0.35–0.46 ms**, not closed-loop rollout measurements.
 
-**20 tests passed on each of A100 and RTX 4090.** With both switches off, 12 regression fixture outputs matched v0.1.0 byte for byte; the full checkpoint also matched its prior fixed-FFN Parallel reference. Historical BF16 fusions differ from native eager, and FFN autotuning can change accumulation order. This is not a claim of bitwise equality with native OpenWAM.
+**24 tests passed on each of A100 and RTX 4090.** All 240 paired action outputs matched the previous implementation exactly. Another 63 full-checkpoint comparisons also matched first-layer features and every FFN cache, covering all four refresh capacities, prompt changes and resets. On small upstream-layer fixtures, 24 action/video-latent pairs matched exactly. The switches retain their existing approximation; this optimization does not establish equality with native OpenWAM or task-level accuracy.
 
-See [raw measurements and configurations](evidence/switches.json) and [validation and profiling records](VALIDATION.md). Checkpoints, request fixtures and the complete historical audit data are not bundled.
+See [paired samples, configurations and checks](evidence/token-reuse-optimization.json), the [historical v0.2.0 switch measurements](evidence/switches.json), and [validation records](VALIDATION.md). The historical switch timings were grouped sequentially and do not establish a stable token-reuse slowdown. Checkpoints, request fixtures and the complete historical audit data are not bundled.
 
 </details>
 
@@ -94,7 +94,7 @@ WAMInfer shares the original OpenWAM model and weights through an external wrapp
 | Cross-observation FFN/token reuse | `reuse_tokens` | `False` |
 | Motion-adaptive 2F/4F | `adaptive_2f4f` | `False` |
 
-The switches are independent and introduce approximation when enabled. With both off, the existing Parallel behavior is preserved. The package contains **10 core Python files / 2,231 lines** and **2 C++ files / 411 lines**, including comments and blank lines, excluding tests and the benchmark.
+The switches are independent and introduce approximation when enabled. With both off, the existing Parallel behavior is preserved. The package contains **10 core Python files / 2,242 lines** and **2 C++ files / 411 lines**, including comments and blank lines, excluding tests and the benchmark.
 
 ## Getting started
 

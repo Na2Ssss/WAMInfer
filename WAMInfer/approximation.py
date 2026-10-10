@@ -22,7 +22,7 @@ class TokenReuse:
         latents = inputs["latents"]
         h, w = latents.shape[-2] // patch[1], latents.shape[-1] // patch[2]
         n = h * w
-        rgb = np.asarray(image, dtype=np.float32).copy()
+        rgb = np.array(image, copy=True)
         if rgb.ndim != 3 or rgb.shape[-1] != 3 or latents.shape[2] < 2:
             raise ValueError("Token reuse requires one HWC RGB observation and future video frames")
         key = (prompt, tuple(latents.shape), rgb.shape)
@@ -30,7 +30,9 @@ class TokenReuse:
             self.reset()
         mandatory = np.ones(n, dtype=bool)
         if self.image is not None:
-            changes = np.abs(rgb - self.image).reshape(h, rgb.shape[0] // h, w, rgb.shape[1] // w, 3)
+            changes = np.subtract(rgb, self.image, dtype=np.float32)
+            np.abs(changes, out=changes)
+            changes = changes.reshape(h, rgb.shape[0] // h, w, rgb.shape[1] // w, 3)
             mandatory = changes.mean(axis=(1, 3, 4)).reshape(-1) > 5.0
         required = int(mandatory.sum())
         required += math.ceil(0.25 * (n - required))
@@ -46,7 +48,8 @@ class TokenReuse:
 
     def commit(self, observation, features, cache):
         self.key, self.image = observation
-        self.features, self.cache = features, cache
+        # Own the committed history: a later failed request must not overwrite it.
+        self.features, self.cache = features.clone(), cache.clone()
 
 
 def select_tokens(state, features):

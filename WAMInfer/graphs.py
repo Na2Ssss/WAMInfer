@@ -30,8 +30,9 @@ def module_guard(module, *, track_versions=False):
 class CudaGraphForward:
     """A bounded graph; serialized variants may share input storage and a pool."""
 
-    def __init__(self, forward, *, reuse_unchanged_inputs=False, shared_inputs=None):
+    def __init__(self, forward, *, reuse_unchanged_inputs=False, shared_inputs=None, clone_outputs=True):
         self.forward = forward
+        self.clone_outputs = clone_outputs
         self.shared_inputs = shared_inputs
         self.reuse_unchanged_inputs = shared_inputs.reuse_unchanged_inputs if shared_inputs else reuse_unchanged_inputs
         self.captures = 0
@@ -117,6 +118,11 @@ class CudaGraphForward:
         self.graph.replay()
         self.replays += 1
         (outputs, output_spec) = tree_flatten(self.outputs)
+        if not self.clone_outputs:
+            # Borrowed outputs live until the next replay. CUDA writes must
+            # invalidate downstream input guards even when storage is unchanged.
+            torch.autograd.graph.increment_version([value for value in outputs if isinstance(value, torch.Tensor)])
+            return self.outputs
         return tree_unflatten(
             [value.clone() if isinstance(value, torch.Tensor) else value for value in outputs], output_spec
         )

@@ -16,7 +16,7 @@ def test_capacity_and_feature_selection():
     reuse, observation = history.begin(image, inputs, "task", (1, 2, 2))
     assert reuse["count"] == 4
     previous = torch.ones(1, 4, 8)
-    history.commit(observation, previous, (previous,))
+    history.commit(observation, previous, previous.unsqueeze(0))
     image[:4, 4:] = 30  # Token 1 is mandatory, regardless of its feature score.
     reuse, _ = history.begin(image, inputs, "task", (1, 2, 2))
     assert reuse["count"] == 2
@@ -40,6 +40,42 @@ def test_motion_schedule_and_contract():
         MotionRefinement(None, 0.08, schedule)
     with pytest.raises(ValueError, match="10 Euler"):
         MotionRefinement(lambda x: 0.1, 0.08, schedule[:5])
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.float32, np.float64])
+def test_rgb_route_preserves_float32_threshold_and_snapshot(dtype):
+    history = TokenReuse((32, 64, 96, 120))
+    inputs = dict(latents=torch.zeros(1, 4, 3, 24, 20))
+    rng = np.random.default_rng(9)
+    before = rng.integers(0, 240, (384, 320, 3), dtype=np.uint8).astype(dtype)
+    _, observation = history.begin(before, inputs, "task", (1, 2, 2))
+    history.commit(observation, torch.empty(1, 120, 1), torch.empty(1, 1, 120, 1))
+    saved = before.astype(np.float32)
+    before[:] = 0  # The caller may recycle its camera buffer after a request.
+    for change in (4.999999, 5.0, 5.000001, 9.0):
+        current = (saved.astype(np.float64) + change).astype(dtype)
+        reuse, _ = history.begin(current, inputs, "task", (1, 2, 2))
+        difference = np.abs(current.astype(np.float32) - saved)
+        expected = difference.reshape(12, 32, 10, 32, 3).mean(axis=(1, 3, 4)).reshape(-1) > 5.0
+        np.testing.assert_array_equal(reuse["mandatory"].numpy(), expected)
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+@torch.no_grad()
+def test_borrowed_graph_outputs_refresh_downstream_inputs():
+    from WAMInfer.graphs import CudaGraphForward
+
+    producer = CudaGraphForward(lambda x: x + 1, reuse_unchanged_inputs=True, clone_outputs=False)
+    consumer = CudaGraphForward(lambda x: 2 * x, reuse_unchanged_inputs=True)
+    x = torch.zeros(8, device="cuda")
+    borrowed = producer(x)
+    first = consumer(borrowed)
+    for value in (3, 7, -2):
+        x.fill_(value)
+        assert producer(x) is borrowed
+        torch.testing.assert_close(consumer(borrowed), torch.full_like(x, 2 * (value + 1)), atol=0, rtol=0)
+    torch.testing.assert_close(first, torch.full_like(x, 2), atol=0, rtol=0)
 
 
 @pytest.mark.gpu
@@ -151,6 +187,24 @@ def test_switches_graph_replay_and_history(monkeypatch, reuse_tokens, adaptive):
         fast.video_backbone.dit.blocks[0].self_attn.q.weight.add_(0.01)
         run(0.1)
         assert fast.last_stats["refreshed_tokens"] == 4
+        if adaptive:
+            # A failed sparse or full-refresh request cannot publish partial history.
+            def fail(actions):
+                raise RuntimeError("failed motion callback")
+
+            for delta in (0, 20):
+                history = fast.token_reuse
+                features, cache, rgb = history.features.clone(), history.cache.clone(), history.image.copy()
+                inputs["first_frame_latents"].add_(0.25)
+                image[:] = delta
+                with pytest.raises(RuntimeError, match="failed motion callback"):
+                    fast.generate(schedule, "task", first_frame_image=image, proprio=inputs["proprio"],
+                                  action_num_frames=4, motion_metric=fail)
+                torch.testing.assert_close(history.features, features, atol=0, rtol=0)
+                torch.testing.assert_close(history.cache, cache, atol=0, rtol=0)
+                np.testing.assert_array_equal(history.image, rgb)
+                inputs["first_frame_latents"].sub_(0.25)
+                image[:] = 0
     else:
         np.testing.assert_array_equal(run(0.1)["actions"], initial["actions"])
     if adaptive:
